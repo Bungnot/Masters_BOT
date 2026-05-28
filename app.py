@@ -10682,8 +10682,6 @@ def is_backoffice_relevant_text(text: str, user_id: str = None) -> bool:
         return True
     if parse_credit_command(raw):
         return True
-    if upper == "CLEAR ALL":
-        return True
 
     return False
 
@@ -10782,16 +10780,55 @@ def handle_clear_all(event, user_id):
     # ครั้งที่ 2 — ยืนยันแล้ว ล้างจริง
     CLEAR_ALL_PENDING.pop(user_id, None)
 
+    total_refunded_matches = 0
+    total_refunded_credit = 0
+
     with STATE_LOCK:
-        # ล้าง POSTS และ MATCHES ใน memory
+        # ===== คืนเครดิตลูกค้าทุกรอบที่ยังไม่แจ้งผล =====
+        cleared_at = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        reason = "CLEAR ALL โดยแอดมิน"
+
+        for base_no, st in list(ROUNDS.items()):
+            if not isinstance(st, dict):
+                continue
+            round_id = st.get("round_id")
+            if not round_id or st.get("settled"):
+                continue
+
+            # คืนเครดิตบิลที่จับคู่สำเร็จในรอบนี้
+            for match in list(MATCHES.values()):
+                if match.get("round_id") != round_id:
+                    continue
+                if match.get("status") == "matched":
+                    amount = int(match.get("amount", 0) or 0)
+                    maker = USERS.get(match.get("maker_id"))
+                    taker = USERS.get(match.get("taker_id"))
+                    if maker:
+                        maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+                        total_refunded_credit += amount
+                    if taker:
+                        taker["credit"] = int(taker.get("credit", 0) or 0) + amount
+                        total_refunded_credit += amount
+                    match["status"] = "cancelled"
+                    match["cancel_reason"] = reason
+                    total_refunded_matches += 1
+                elif match.get("status") in {"open", "pending"}:
+                    match["status"] = "cancelled"
+                    match["cancel_reason"] = reason
+
+        # บันทึกเครดิตที่คืนแล้ว
+        try:
+            save_user_db()
+        except Exception as e:
+            print(f"CLEAR ALL save_user_db error: {e}")
+
+        # ===== ล้างทุกอย่าง =====
         POSTS.clear()
         MATCHES.clear()
 
-        # ล้าง ROUNDS ทุกฐาน
         for base_no in list(ROUNDS.keys()):
             ROUNDS[base_no] = make_round_state(base_no)
 
-        # รีเซ็ต STATE กลับเป็นฐาน 1
         ACTIVE_BASE_NO = "1"
         STATE = ROUNDS["1"]
 
@@ -10822,8 +10859,10 @@ def handle_clear_all(event, user_id):
 
     reply_text(
         event.reply_token,
-        "✅ CLEAR ALL เสร็จสิ้น\n"
-        "ล้างสกอ / รอบทุกรอบ / Backup / ออเดอร์ ทั้งหมดแล้ว\n"
+        "✅ CLEAR ALL เสร็จสิ้น\n\n"
+        f"💰 คืนเครดิตลูกค้าแล้ว: {total_refunded_matches:,} บิล\n"
+        f"💰 เครดิตคืนรวม: {total_refunded_credit:,} เครดิต\n\n"
+        "🗑️ ล้างสกอ / รอบทุกรอบ / Backup / ออเดอร์ ทั้งหมดแล้ว\n"
         "พร้อมเปิดรอบใหม่ได้เลย"
     )
 
