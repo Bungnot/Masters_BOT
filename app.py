@@ -40,6 +40,15 @@ from linebot.v3.webhooks import (
 )
 
 load_dotenv()
+# ย้ายไฟล์ข้อมูลเดิมเข้า Volume ถ้ายังไม่มี
+import shutil
+_DATA_DIR = "/app/data"
+os.makedirs(_DATA_DIR, exist_ok=True)
+for _f in ["users.json", "admins.json", "order_state.json", "slip_topups.json"]:
+    _src = os.path.join(os.path.dirname(__file__), _f)
+    _dst = os.path.join(_DATA_DIR, _f)
+    if os.path.exists(_src) and not os.path.exists(_dst):
+        shutil.copy2(_src, _dst)
 
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
@@ -11587,7 +11596,7 @@ def handle_postback(event):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
 threading.Thread(
