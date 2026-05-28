@@ -10682,6 +10682,8 @@ def is_backoffice_relevant_text(text: str, user_id: str = None) -> bool:
         return True
     if parse_credit_command(raw):
         return True
+    if upper == "CLEAR ALL":
+        return True
 
     return False
 
@@ -10795,7 +10797,6 @@ def handle_clear_all(event, user_id):
             if not round_id or st.get("settled"):
                 continue
 
-            # คืนเครดิตบิลที่จับคู่สำเร็จในรอบนี้
             for match in list(MATCHES.values()):
                 if match.get("round_id") != round_id:
                     continue
@@ -10816,7 +10817,6 @@ def handle_clear_all(event, user_id):
                     match["status"] = "cancelled"
                     match["cancel_reason"] = reason
 
-        # บันทึกเครดิตที่คืนแล้ว
         try:
             save_user_db()
         except Exception as e:
@@ -10832,7 +10832,6 @@ def handle_clear_all(event, user_id):
         ACTIVE_BASE_NO = "1"
         STATE = ROUNDS["1"]
 
-        # รีเซ็ต ORDER
         ORDER_STATE["next_order_no"] = ORDER_START_NO
         ORDER_STATE["last_reset"] = datetime.now().isoformat()
         try:
@@ -10840,7 +10839,6 @@ def handle_clear_all(event, user_id):
         except Exception as e:
             print(f"CLEAR ALL save_order_db error: {e}")
 
-        # ล้าง round_backups
         try:
             if os.path.exists(ROUND_BACKUP_DIR):
                 import shutil
@@ -10849,7 +10847,6 @@ def handle_clear_all(event, user_id):
         except Exception as e:
             print(f"CLEAR ALL backup dir error: {e}")
 
-        # ล้าง slip_topups
         try:
             SLIP_TOPUP_DB["slips"] = {}
             SLIP_TOPUP_DB["updated_at"] = datetime.now().isoformat()
