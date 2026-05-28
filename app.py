@@ -47,7 +47,7 @@ os.makedirs(_DATA_DIR, exist_ok=True)
 for _f in ["users.json", "admins.json", "order_state.json", "slip_topups.json"]:
     _src = os.path.join(os.path.dirname(__file__), _f)
     _dst = os.path.join(_DATA_DIR, _f)
-    if os.path.exists(_src) and not os.path.exists(_dst):
+    if os.path.exists(_src):
         shutil.copy2(_src, _dst)
 
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
