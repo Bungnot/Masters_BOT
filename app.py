@@ -82,40 +82,48 @@ ROUND_BACKUP_DIR = os.getenv("ROUND_BACKUP_DIR", "round_backups")
 ROUND_BACKUP_DB_FILE = os.getenv("ROUND_BACKUP_DB_FILE", "round_backup.json")
 
 # ======================================================
-# Slip2Go auto top-up settings
-# ตั้งค่าใน .env ให้ตรงกับหน้า API Connect ของ Slip2Go
+# EasySlip auto top-up settings
+# ตั้งค่าใน .env:
+#   EASYSLIP_API_KEY=<API Key จากหน้า EasySlip>
+#   EASYSLIP_ACCOUNT_NUMBER=<เลขบัญชีผู้รับ สำหรับ checkReceiver>
 # ======================================================
-SLIP2GO_ENABLED = os.getenv("SLIP2GO_ENABLED", "1") == "1"
-SLIP2GO_API_URL = os.getenv("SLIP2GO_API_URL", "").strip()
-SLIP2GO_API_TOKEN = os.getenv("SLIP2GO_API_TOKEN", "").strip()
-SLIP2GO_AUTH_HEADER_NAME = os.getenv("SLIP2GO_AUTH_HEADER_NAME", "Authorization").strip()
-SLIP2GO_AUTH_PREFIX = os.getenv("SLIP2GO_AUTH_PREFIX", "Bearer").strip()
-SLIP2GO_IMAGE_FIELD = os.getenv("SLIP2GO_IMAGE_FIELD", "file").strip() or "file"
-# แยก connect/read timeout และเพิ่ม retry ให้ Slip2Go เพราะบางช่วง API ตอบช้าเกิน 8 วินาที
-SLIP2GO_CONNECT_TIMEOUT_SECONDS = float(os.getenv("SLIP2GO_CONNECT_TIMEOUT_SECONDS", "5"))
-SLIP2GO_TIMEOUT_SECONDS = float(os.getenv("SLIP2GO_TIMEOUT_SECONDS", "20"))
-SLIP2GO_API_RETRIES = int(os.getenv("SLIP2GO_API_RETRIES", "2"))
-SLIP2GO_API_RETRY_DELAY_SECONDS = float(os.getenv("SLIP2GO_API_RETRY_DELAY_SECONDS", "1.0"))
-SLIP2GO_REQUIRE_RECEIVER_TEXT = os.getenv("SLIP2GO_REQUIRE_RECEIVER_TEXT", "").strip()
-# ส่ง payload ไปให้ Slip2Go ตรวจซ้ำ/ตรวจบัญชีผู้รับตามเอกสาร API Connect
-SLIP2GO_CHECK_DUPLICATE = os.getenv("SLIP2GO_CHECK_DUPLICATE", "1") == "1"
-SLIP2GO_RECEIVER_ACCOUNT_NUMBER = os.getenv("SLIP2GO_RECEIVER_ACCOUNT_NUMBER", SLIP2GO_REQUIRE_RECEIVER_TEXT).strip()
-SLIP2GO_RECEIVER_ACCOUNT_TYPE = os.getenv("SLIP2GO_RECEIVER_ACCOUNT_TYPE", "").strip()
-SLIP2GO_RECEIVER_ACCOUNT_NAME_TH = os.getenv("SLIP2GO_RECEIVER_ACCOUNT_NAME_TH", "").strip()
-SLIP2GO_RECEIVER_ACCOUNT_NAME_EN = os.getenv("SLIP2GO_RECEIVER_ACCOUNT_NAME_EN", "").strip()
-# รองรับบัญชีผู้รับสำหรับเช็คสลิปอัตโนมัติ
-# รูปแบบง่ายใน .env:
-# SLIP2GO_RECEIVER_ACCOUNTS=เลขบัญชี|ชื่อไทย|ชื่ออังกฤษ|ชื่อธนาคาร|ประเภทบัญชี;เลขบัญชี|ชื่อไทย|ชื่ออังกฤษ|ชื่อธนาคาร|ประเภทบัญชี
-# หรือใช้ SLIP2GO_RECEIVER_ACCOUNTS_JSON เป็น JSON list ได้
-SLIP2GO_RECEIVER_ACCOUNTS = os.getenv("SLIP2GO_RECEIVER_ACCOUNTS", "").strip()
-SLIP2GO_RECEIVER_ACCOUNTS_JSON = os.getenv("SLIP2GO_RECEIVER_ACCOUNTS_JSON", "").strip()
-SLIP2GO_DEBUG_MODE = os.getenv("SLIP2GO_DEBUG_MODE", "1") == "1"
-# ถ้า Slip2Go ตอบ 200404 / Slip not found ให้แจ้งรอส่งใหม่ แทนการเงียบ
-SLIP2GO_NOTIFY_NOT_FOUND = os.getenv("SLIP2GO_NOTIFY_NOT_FOUND", "1") == "1"
-# ตรวจภาพก่อนส่งเข้า Slip2Go ด้วย QR gate
+EASYSLIP_ENABLED = os.getenv("EASYSLIP_ENABLED", "1") == "1"
+EASYSLIP_API_KEY = os.getenv("EASYSLIP_API_KEY", "").strip()
+EASYSLIP_API_URL = os.getenv("EASYSLIP_API_URL", "https://developer.easyslip.com/api/v1/verify").strip()
+# เลขบัญชีผู้รับที่ต้องตรงกับสลิป (ถ้าไม่ตั้งค่าไว้จะไม่เช็คบัญชีผู้รับ)
+EASYSLIP_ACCOUNT_NUMBER = os.getenv("EASYSLIP_ACCOUNT_NUMBER", "").strip()
+EASYSLIP_ACCOUNT_NAME_TH = os.getenv("EASYSLIP_ACCOUNT_NAME_TH", "").strip()
+EASYSLIP_ACCOUNT_NAME_EN = os.getenv("EASYSLIP_ACCOUNT_NAME_EN", "").strip()
+EASYSLIP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_CONNECT_TIMEOUT_SECONDS", "5"))
+EASYSLIP_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_TIMEOUT_SECONDS", "20"))
+EASYSLIP_API_RETRIES = int(os.getenv("EASYSLIP_API_RETRIES", "2"))
+EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SECONDS", "1.0"))
+EASYSLIP_DEBUG_MODE = os.getenv("EASYSLIP_DEBUG_MODE", "1") == "1"
+# ตรวจภาพก่อนส่งเข้า EasySlip ด้วย QR gate
 # ปิดเป็นค่าเริ่มต้น เพราะรูปสลิปจาก LINE บางครั้งถูกบีบอัด/QR เล็ก ทำให้ OpenCV ตรวจไม่เจอและบอทเงียบ
-# ถ้าต้องการกรองรูปทั่วไปเอง ค่อยตั้ง SLIP_IMAGE_QR_GATE_ENABLED=1
 SLIP_IMAGE_QR_GATE_ENABLED = os.getenv("SLIP_IMAGE_QR_GATE_ENABLED", "0") == "1"
+
+# ── ตัวแปร Slip2Go ที่ยังถูกอ้างถึงในฟังก์ชันเก่า (stub เพื่อไม่ให้ crash) ──────
+SLIP2GO_ENABLED = False
+SLIP2GO_API_URL = ""
+SLIP2GO_API_TOKEN = ""
+SLIP2GO_AUTH_HEADER_NAME = "Authorization"
+SLIP2GO_AUTH_PREFIX = "Bearer"
+SLIP2GO_IMAGE_FIELD = "file"
+SLIP2GO_CONNECT_TIMEOUT_SECONDS = 5.0
+SLIP2GO_TIMEOUT_SECONDS = 20.0
+SLIP2GO_API_RETRIES = 2
+SLIP2GO_API_RETRY_DELAY_SECONDS = 1.0
+SLIP2GO_REQUIRE_RECEIVER_TEXT = ""
+SLIP2GO_CHECK_DUPLICATE = False
+SLIP2GO_RECEIVER_ACCOUNT_NUMBER = ""
+SLIP2GO_RECEIVER_ACCOUNT_TYPE = ""
+SLIP2GO_RECEIVER_ACCOUNT_NAME_TH = ""
+SLIP2GO_RECEIVER_ACCOUNT_NAME_EN = ""
+SLIP2GO_RECEIVER_ACCOUNTS = ""
+SLIP2GO_RECEIVER_ACCOUNTS_JSON = ""
+SLIP2GO_DEBUG_MODE = False
+SLIP2GO_NOTIFY_NOT_FOUND = False
 # 1 บาท = 1 เครดิต เป็นค่าเริ่มต้น ถ้าต้องการ 1 บาท = 100 เครดิต ให้ตั้ง AUTO_TOPUP_RATE=100
 AUTO_TOPUP_RATE = Decimal(os.getenv("AUTO_TOPUP_RATE", "1"))
 MIN_TOPUP_AMOUNT = Decimal(os.getenv("MIN_TOPUP_AMOUNT", "1"))
@@ -3841,7 +3849,7 @@ def has_unsettled_round():
 
 
 # ======================================================
-# Slip2Go auto top-up
+# EasySlip auto top-up
 # ======================================================
 
 def get_line_image_bytes(message_id: str):
@@ -4349,189 +4357,225 @@ def is_slip2go_duplicate_with_null_data_response(data):
     return False
 
 
-def call_slip2go_api(image_bytes: bytes):
+def call_easyslip_api(image_bytes: bytes):
     """
-    ยิง API ตรวจสลิปกับ Slip2Go จากรูปภาพที่ลูกค้าส่งเข้า LINE OA
+    ยิง EasySlip API v2 ตรวจสลิปจากรูปภาพที่ลูกค้าส่งเข้า LINE OA
 
-    ใช้ endpoint รูปภาพ: /api/verify-slip/qr-image/info
-    ส่งแบบ Multipart/Form-data:
-    - file = ไฟล์รูปสลิป
-    - payload = JSON string เช่น {"checkDuplicate": true, "checkReceiver": [{"accountNumber": "..."}]}
+    EasySlip v2 Endpoint: POST https://api.easyslip.com/v2/verify/bank
+    Auth: Authorization: Bearer <key>
+    Body: multipart/form-data  field=image
+    Response: { success: true/false, data: { isDuplicate, rawSlip: {...} } }
     """
-    if not SLIP2GO_ENABLED:
+    if not EASYSLIP_ENABLED:
         return False, "ระบบตรวจสลิปอัตโนมัติถูกปิดอยู่", None
 
-    if not SLIP2GO_API_URL:
-        return False, "ยังไม่ได้ตั้งค่า SLIP2GO_API_URL ในไฟล์ .env", None
+    if not EASYSLIP_API_KEY:
+        return False, "ยังไม่ได้ตั้งค่า EASYSLIP_API_KEY ในไฟล์ .env", None
 
     if not image_bytes:
         return False, "ไม่พบไฟล์รูปสลิปจาก LINE", None
 
-    api_url = normalize_slip2go_image_url(SLIP2GO_API_URL)
-    try:
-        headers = build_slip2go_headers()
-    except ValueError as e:
-        return False, str(e), None
+    # V2 endpoint และ header ใหม่
+    api_url = "https://api.easyslip.com/v2/verify/bank"
+    headers = {"Authorization": f"Bearer {EASYSLIP_API_KEY}"}
 
-    if not headers:
-        return False, "ยังไม่ได้ตั้งค่า SLIP2GO_API_TOKEN ในไฟล์ .env", None
-
-    payload = build_slip2go_payload()
-    payload_text = json.dumps(payload, ensure_ascii=False) if payload else None
-
-    # เริ่มจาก field ตามเอกสารคือ file แล้วค่อย fallback เผื่อมีการตั้งค่าเอง
-    candidate_fields = []
-    for field in [SLIP2GO_IMAGE_FIELD, "file", "image", "qr_image", "qrImage", "slip"]:
-        field = (field or "").strip()
-        if field and field not in candidate_fields:
-            candidate_fields.append(field)
-
-    # ทดลอง 2 แบบ: มี payload ก่อน / ไม่มี payload เผื่อบัญชี API บางร้านยังไม่ได้เปิดเงื่อนไขตรวจผู้รับ
-    payload_variants = []
-    if payload_text:
-        payload_variants.append(("with_payload", {"payload": payload_text}))
-    payload_variants.append(("file_only", None))
-
+    attempts = max(1, int(EASYSLIP_API_RETRIES or 1))
     last_status = None
     last_data = None
-    last_field = None
-    last_variant = None
-    last_content_type = ""
 
-    for variant_name, form_data in payload_variants:
-        for field_name in candidate_fields:
-            files = {
-                field_name: ("slip.jpg", image_bytes, "image/jpeg")
-            }
-
-            req_ok, response, req_error = post_slip2go_request(api_url, headers, files, form_data)
-            if not req_ok:
-                err_type = (req_error or {}).get("type")
-                err_msg = (req_error or {}).get("message", "unknown error")
-                attempts = (req_error or {}).get("attempts", 1)
-                if err_type == "timeout":
-                    return (
-                        False,
-                        f"Slip2Go ตอบช้า/หมดเวลา หลังลอง {attempts} ครั้ง: {err_msg}",
-                        slip2go_network_error_payload("slip2go_timeout", err_msg, api_url, attempts),
-                    )
-                return (
-                    False,
-                    f"เชื่อมต่อ Slip2Go ไม่สำเร็จ: {err_msg}",
-                    slip2go_network_error_payload("slip2go_connection_error", err_msg, api_url, attempts),
-                )
+    for attempt in range(1, attempts + 1):
+        try:
+            # V2 ใช้ field ชื่อ "image" (ไม่ใช่ "file" แบบ V1)
+            files = {"image": ("slip.jpg", image_bytes, "image/jpeg")}
+            form_data = {"checkDuplicate": "true"}
+            response = requests.post(
+                api_url,
+                headers=headers,
+                files=files,
+                data=form_data,
+                timeout=(EASYSLIP_CONNECT_TIMEOUT_SECONDS, EASYSLIP_TIMEOUT_SECONDS),
+            )
+            last_status = response.status_code
 
             try:
-                data = response.json()
+                last_data = response.json()
             except Exception:
-                data = {"raw_text": response.text[:1000]}
+                last_data = {"raw_text": response.text[:1000]}
 
-            last_status = response.status_code
-            last_data = data
-            last_field = field_name
-            last_variant = variant_name
-            body_text, last_content_type = slip2go_error_text(response, data)
+            # V2: HTTP 200 + success=true = ผ่าน
+            if response.status_code == 200 and isinstance(last_data, dict) and last_data.get("success") is True:
+                return True, "ok", last_data
 
-            if 200 <= response.status_code < 300:
-                # เคสพิเศษตามคำแนะนำ Slip2Go:
-                # ถ้าเปิด checkDuplicate=True แล้วได้ duplicate + data:null
-                # ให้ยิงซ้ำอีกครั้งโดยปิด checkDuplicate ชั่วคราว แต่ยังคงส่ง checkReceiver เหมือนเดิม
-                if (
-                    variant_name == "with_payload"
-                    and isinstance(payload, dict)
-                    and payload.get("checkDuplicate") is True
-                    and is_slip2go_duplicate_with_null_data_response(data)
-                ):
-                    retry_payload = build_slip2go_payload(check_duplicate=False)
-                    retry_payload_text = json.dumps(retry_payload, ensure_ascii=False) if retry_payload else None
-                    retry_form_data = {"payload": retry_payload_text} if retry_payload_text else None
+            # V2: HTTP 4xx + success=false = error มี error.code บอกสาเหตุ
+            # 401/403 = token/IP ผิด ไม่ต้อง retry
+            if response.status_code in (401, 403):
+                error_code = ""
+                if isinstance(last_data, dict):
+                    error_code = str((last_data.get("error") or {}).get("code") or "")
+                hint = "ให้ตรวจ EASYSLIP_API_KEY ใน .env และเพิ่ม IP Server ใน EasySlip"
+                return False, f"EasySlip ตอบ HTTP {response.status_code} ({error_code})\n{hint}", last_data
 
-                    req_ok, retry_response, req_error = post_slip2go_request(
-                        api_url,
-                        headers,
-                        {field_name: ("slip.jpg", image_bytes, "image/jpeg")},
-                        retry_form_data,
-                    )
-                    if not req_ok:
-                        err_type = (req_error or {}).get("type")
-                        err_msg = (req_error or {}).get("message", "unknown error")
-                        attempts = (req_error or {}).get("attempts", 1)
-                        if err_type == "timeout":
-                            return (
-                                False,
-                                f"Slip2Go ตอบช้า/หมดเวลาตอนยิงซ้ำ หลังลอง {attempts} ครั้ง: {err_msg}",
-                                slip2go_network_error_payload("slip2go_timeout", err_msg, api_url, attempts),
-                            )
-                        return (
-                            False,
-                            f"เชื่อมต่อ Slip2Go ไม่สำเร็จตอนยิงซ้ำแบบปิด duplicate: {err_msg}",
-                            slip2go_network_error_payload("slip2go_connection_error", err_msg, api_url, attempts),
-                        )
+            # 404 = สลิปไม่เจอ / BBL pending — คืนค่ากลับไปให้ caller จัดการ
+            if response.status_code == 404:
+                return False, "slip_not_found", last_data
 
-                    try:
-                        retry_data = retry_response.json()
-                    except Exception:
-                        retry_data = {"raw_text": retry_response.text[:1000]}
+            # 429/5xx retry ได้
+            if response.status_code in (429, 500, 502, 503, 504) and attempt < attempts:
+                print(f"EASYSLIP RETRY HTTP {response.status_code} attempt {attempt}/{attempts}")
+                time.sleep(EASYSLIP_API_RETRY_DELAY_SECONDS * attempt)
+                continue
 
-                    last_status = retry_response.status_code
-                    last_data = retry_data
-                    last_field = field_name
-                    last_variant = "with_payload_retry_checkDuplicate_false"
-                    body_text, last_content_type = slip2go_error_text(retry_response, retry_data)
+            # error อื่น ๆ
+            error_msg = ""
+            if isinstance(last_data, dict):
+                error_msg = str((last_data.get("error") or {}).get("message") or "")
+            return False, f"EasySlip ตอบกลับ HTTP {last_status}" + (f": {error_msg}" if error_msg else ""), last_data
 
-                    if 200 <= retry_response.status_code < 300:
-                        if isinstance(retry_data, dict):
-                            retry_data.setdefault("_slip2go_debug", {})
-                            retry_data["_slip2go_debug"].update({
-                                "endpoint_used": api_url,
-                                "field_used": field_name,
-                                "payload_variant": "with_payload_retry_checkDuplicate_false",
-                                "payload_sent": retry_payload,
-                                "configured_endpoint": SLIP2GO_API_URL,
-                                "retry_reason": "duplicate_with_null_data",
-                            })
-                        return True, "ok", retry_data
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.Timeout) as e:
+            if attempt < attempts:
+                print(f"EASYSLIP TIMEOUT attempt {attempt}/{attempts}: {e}")
+                time.sleep(EASYSLIP_API_RETRY_DELAY_SECONDS * attempt)
+                continue
+            return (
+                False,
+                f"EasySlip ตอบช้า/หมดเวลา หลังลอง {attempts} ครั้ง: {e}",
+                {"_easyslip_debug": {"error_type": "timeout", "message": str(e), "attempts": attempts}},
+            )
 
-                    # ถ้ายิงซ้ำไม่ผ่าน ให้ปล่อยให้ระบบไปสร้างข้อความ error จากผล retry ล่าสุด
-                    break
+        except requests.exceptions.RequestException as e:
+            if attempt < attempts:
+                print(f"EASYSLIP REQUEST ERROR attempt {attempt}/{attempts}: {e}")
+                time.sleep(EASYSLIP_API_RETRY_DELAY_SECONDS * attempt)
+                continue
+            return (
+                False,
+                f"เชื่อมต่อ EasySlip ไม่สำเร็จ: {e}",
+                {"_easyslip_debug": {"error_type": "connection_error", "message": str(e), "attempts": attempts}},
+            )
 
-                if isinstance(data, dict):
-                    data.setdefault("_slip2go_debug", {})
-                    data["_slip2go_debug"].update({
-                        "endpoint_used": api_url,
-                        "field_used": field_name,
-                        "payload_variant": variant_name,
-                        "payload_sent": payload if variant_name == "with_payload" else None,
-                        "configured_endpoint": SLIP2GO_API_URL,
-                    })
-                return True, "ok", data
+    return False, f"EasySlip ตอบกลับ HTTP {last_status}", last_data
 
-            # 400 = request body/field/payload อาจผิด จึงลองต่อ
-            # 401/403/429/5xx มักเป็น token, IP whitelist, เครดิต/โควตา, หรือ service จึงไม่ควรยิงซ้ำเยอะ
-            if response.status_code != 400:
-                break
 
-        if last_status != 400:
-            break
+# ── stub เก่าเพื่อไม่ให้ code เก่าที่ยังอ้าง call_slip2go_api crash ──────────────
+def call_slip2go_api(image_bytes: bytes):
+    """Stub: โค้ดนี้ถูกแทนที่ด้วย call_easyslip_api แล้ว"""
+    return call_easyslip_api(image_bytes)
 
-    detail = short_response_detail(last_data)
-    extra = ""
-    extra += f"\nendpoint ที่ใช้: {api_url}"
-    extra += f"\nfield ที่ลองล่าสุด: {last_field}"
-    extra += f"\nรูปแบบที่ลองล่าสุด: {last_variant}"
-    if last_content_type:
-        extra += f"\ncontent-type: {last_content_type}"
-    if SLIP2GO_API_URL != api_url:
-        extra += "\nหมายเหตุ: ระบบปรับ endpoint จาก qr-code เป็น qr-image ให้อัตโนมัติแล้ว"
-    if detail:
-        extra += f"\nรายละเอียด: {detail}"
 
-    if last_status == 400:
-        extra += "\nคำแนะนำ: เช็กว่า .env ใช้ /api/verify-slip/qr-image/info, key รูปคือ file, และ restart บอทหลังแก้ .env แล้ว"
-    elif last_status in [401, 403]:
-        extra += "\nคำแนะนำ: Token/Authorization หรือ IP Whitelist ไม่ผ่าน ให้สร้าง Secret Key ใหม่และเพิ่ม IP Server ใน Slip2Go"
+def easyslip_get_raw_slip(data: dict) -> dict:
+    """ดึง rawSlip object จาก EasySlip V2 response"""
+    try:
+        return data.get("data", {}).get("rawSlip") or {}
+    except Exception:
+        return {}
 
-    return False, f"Slip2Go ตอบกลับ HTTP {last_status}{extra}", last_data
+
+def easyslip_extract_amount(data: dict):
+    """อ่านยอดเงินจาก EasySlip V2 response: data.rawSlip.amount.amount"""
+    try:
+        raw = easyslip_get_raw_slip(data)
+        val = raw.get("amount", {}).get("amount")
+        if val is not None:
+            return parse_decimal_value(val), "data.rawSlip.amount.amount"
+    except Exception:
+        pass
+    return extract_amount_from_slip2go(data)
+
+
+def easyslip_extract_reference(data: dict, image_bytes: bytes):
+    """อ่านเลข transRef จาก EasySlip V2 response: data.rawSlip.transRef"""
+    try:
+        raw = easyslip_get_raw_slip(data)
+        ref = raw.get("transRef")
+        if ref:
+            return str(ref).strip(), "data.rawSlip.transRef"
+    except Exception:
+        pass
+    return extract_reference_from_slip2go(data, image_bytes)
+
+
+def easyslip_receiver_check_passed(data: dict) -> bool:
+    """
+    ตรวจบัญชีผู้รับจาก EasySlip V2 response
+    V2: data.rawSlip.receiver.account.bank.account = เลขบัญชี
+        data.rawSlip.receiver.account.name.th = ชื่อบัญชี
+    ถ้าไม่ได้ตั้ง EASYSLIP_ACCOUNT_NUMBER ให้ผ่านโดยอัตโนมัติ
+    """
+    expected = EASYSLIP_ACCOUNT_NUMBER.strip()
+    if not expected:
+        return True
+
+    try:
+        raw = easyslip_get_raw_slip(data)
+        receiver = raw.get("receiver", {})
+        acct_bank = receiver.get("account", {}).get("bank", {})
+        acct_no = str(acct_bank.get("account") or "").strip()
+        norm = lambda s: re.sub(r"[^0-9]", "", s)
+        if acct_no and norm(acct_no) == norm(expected):
+            return True
+
+        # fallback proxy account (PromptPay)
+        acct_proxy = receiver.get("account", {}).get("proxy", {})
+        proxy_no = str(acct_proxy.get("account") or "").strip()
+        if proxy_no and norm(proxy_no) == norm(expected):
+            return True
+
+        # fallback ชื่อบัญชี
+        name_th = str(receiver.get("account", {}).get("name", {}).get("th") or "").strip().lower()
+        name_en = str(receiver.get("account", {}).get("name", {}).get("en") or "").strip().lower()
+        for name in [EASYSLIP_ACCOUNT_NAME_TH, EASYSLIP_ACCOUNT_NAME_EN]:
+            if name and name.strip().lower() in (name_th + " " + name_en):
+                return True
+
+        # V2 matchedAccount: ถ้า EasySlip จับคู่บัญชีให้แล้ว ให้เชื่อผลนั้น
+        matched = data.get("data", {}).get("matchedAccount")
+        if matched is not None:
+            matched_no = str(matched.get("bankNumber") or "").strip()
+            if matched_no and norm(matched_no) == norm(expected):
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
+def easyslip_is_verified(data: dict) -> bool:
+    """
+    EasySlip V2: ผ่านเมื่อ success=true และมี rawSlip.transRef
+    """
+    try:
+        if data.get("success") is not True:
+            return False
+        raw = easyslip_get_raw_slip(data)
+        return bool(raw.get("transRef"))
+    except Exception:
+        return False
+
+
+def easyslip_is_duplicate(data: dict) -> bool:
+    """EasySlip V2 มี isDuplicate field ใน data"""
+    try:
+        return data.get("data", {}).get("isDuplicate") is True
+    except Exception:
+        return False
+
+
+def easyslip_is_bbl_pending(data: dict) -> bool:
+    """EasySlip V2 ตอบ error.code = SLIP_PENDING สำหรับสลิป ธ.กรุงเทพที่ยังไม่ sync"""
+    try:
+        error_code = str((data.get("error") or {}).get("code") or "")
+        return error_code == "SLIP_PENDING"
+    except Exception:
+        return False
+
+
+def easyslip_get_error_code(data: dict) -> str:
+    """อ่าน error.code จาก EasySlip V2 error response"""
+    try:
+        return str((data.get("error") or {}).get("code") or "")
+    except Exception:
+        return ""
+
 
 def walk_json_values(obj, path=""):
     """คืนคู่ (path, value) จาก JSON ทุกชั้น ใช้สำหรับอ่าน response ที่แต่ละแพ็กเกจอาจตั้งชื่อ field ไม่เหมือนกัน"""
@@ -4705,7 +4749,7 @@ def slip2go_reject_reason(data):
 
     # ถ้ามี response code แต่ไม่ใช่ code ที่ถือว่าตรวจผ่าน ไม่ควรเติมเครดิต
     if code and code not in ["200200"]:
-        return "not_valid", f"Slip2Go ยังไม่ได้ยืนยันว่าเป็น Slip is Valid (code: {code})"
+        return "not_valid", f"ระบบยังไม่ได้ยืนยันสลิปนี้ (code: {code})"
 
     clean_text = slip2go_text_blob(remove_internal_slip2go_debug(data)).lower()
     receiver_bad_words = [
@@ -5015,6 +5059,15 @@ def is_bangkok_bank_transfer(data):
     - จะถือว่าเป็นกรุงเทพเฉพาะเมื่อ field ที่เกี่ยวกับผู้โอน/ต้นทาง/ธนาคารต้นทาง
       มีค่า Bangkok Bank / BBL / ธ.กรุงเทพ / ธนาคารกรุงเทพ / bank code 002 อย่างชัดเจน
     """
+    # ── EasySlip: ตรวจจาก data.sender.bank.name / data.sender.bank.short ──────
+    try:
+        sender_bank = data.get("data", {}).get("sender", {}).get("bank", {})
+        bank_name = str(sender_bank.get("name") or sender_bank.get("short") or "").lower()
+        bbl_keywords = ["กรุงเทพ", "bangkok", "bbl"]
+        if any(k in bank_name for k in bbl_keywords):
+            return True
+    except Exception:
+        pass
     clean_data = remove_internal_slip2go_debug(data)
     values = walk_json_values(clean_data)
 
@@ -5091,11 +5144,11 @@ def slip_bangkok_bank_wait_flex():
             ("สถานะ", "ยังไม่เติมเครดิต", "#F59E0B"),
             ("คำแนะนำ", "โอนจาก ธ.กรุงเทพ ให้รอ 2-3 นาที แล้วส่งสลิปใหม่อีกครั้งนะคะ", "#374151"),
         ],
-        footer_text="ระบบจะเติมเครดิตเมื่อส่งสลิปใหม่และ Slip2Go ตรวจผ่านเท่านั้น",
+        footer_text="ระบบจะเติมเครดิตเมื่อส่งสลิปใหม่และตรวจผ่านเท่านั้น",
     )
 
 
-def slip_pending_retry_flex(reason="Slip2Go ยังไม่ยืนยันสลิปนี้"):
+def slip_pending_retry_flex(reason="EasySlip ยังไม่ยืนยันสลิปนี้"):
     """
     ใช้กรณี Slip2Go ตอบว่าสลิปซ้ำ/ยังไม่พร้อม แต่บอทยังไม่เคยเติมเครดิตจริง
     ห้ามขึ้นว่า 'สลิปซ้ำ' เพราะจะทำให้ลูกค้าเข้าใจผิดว่าเคยเติมแล้ว
@@ -5111,7 +5164,7 @@ def slip_pending_retry_flex(reason="Slip2Go ยังไม่ยืนยัน
             ("สาเหตุ", reason, "#374151"),
             ("คำแนะนำ", "ให้รอประมาณ 2-3 นาที แล้วส่งสลิปใหม่อีกครั้งนะคะ", "#374151"),
         ],
-        footer_text="ถ้าบอทเคยเติมเครดิตสำเร็จแล้วเท่านั้น ระบบจะแจ้งว่าสลิปซ้ำ",
+        footer_text="ระบบจะเติมเครดิตเมื่อตรวจสลิปผ่านเท่านั้น ถ้าเคยเติมแล้วระบบจะแจ้งว่าสลิปซ้ำ",
     )
 
 
@@ -5140,16 +5193,16 @@ def is_slip_not_found_response(reject_type: str = None, message: str = "") -> bo
 def slip_not_found_wait_flex():
     return slip_status_flex(
         title="⏳ รอตรวจสลิปอีกครั้ง",
-        subtitle="Slip2Go ยังไม่พบข้อมูลสลิปในระบบธนาคาร",
+        subtitle="ระบบยังไม่พบข้อมูลสลิปในระบบธนาคาร",
         status_text="ยังไม่เติมเครดิต",
         color="#F59E0B",
         emoji="⏳",
         details=[
             ("สถานะ", "ยังไม่เติมเครดิต", "#F59E0B"),
-            ("สาเหตุ", "Slip2Go ตอบ 200404 / Slip not found", "#374151"),
+            ("สาเหตุ", "ระบบยังไม่พบข้อมูลสลิปในระบบธนาคาร", "#374151"),
             ("คำแนะนำ", "ถ้าเป็นสลิป ธ.กรุงเทพ หรือสลิปที่เพิ่งโอน ให้รอประมาณ 2-3 นาที แล้วส่งสลิปใหม่อีกครั้งนะคะ", "#374151"),
         ],
-        footer_text="ระบบจะเติมเครดิตเมื่อส่งสลิปใหม่และ Slip2Go ตรวจผ่านเท่านั้น",
+        footer_text="ระบบจะเติมเครดิตเมื่อส่งสลิปใหม่และตรวจผ่านเท่านั้น",
     )
 
 
@@ -5166,7 +5219,7 @@ def slip2go_reject_flex(data=None, reject_type: str = None, reject_msg: str = No
 
     code = str(code or "-")
     reject_type = reject_type or "not_valid"
-    reject_msg = reject_msg or "Slip2Go ยังไม่ได้ยืนยันว่าเป็น Slip is Valid"
+    reject_msg = reject_msg or "ระบบยังไม่ได้ยืนยันสลิปนี้"
 
     status_map = {
         "receiver": {
@@ -5178,51 +5231,50 @@ def slip2go_reject_flex(data=None, reject_type: str = None, reject_msg: str = No
         "amount": {
             "title": "❌ ยอดโอนไม่ตรงเงื่อนไข",
             "status": "ยอดไม่ตรง",
-            "reason": "ยอดเงินโอนในสลิปไม่ตรงกับเงื่อนไขที่ Slip2Go ตรวจสอบ",
+            "reason": "ยอดเงินโอนในสลิปไม่ตรงกับเงื่อนไขที่ระบบตรวจสอบ",
             "suggestion": "ตรวจยอดโอนในสลิป หรือให้ลูกค้าส่งสลิปใหม่ที่ถูกต้อง",
         },
         "date": {
             "title": "❌ วันที่โอนไม่ตรงเงื่อนไข",
             "status": "วันที่ไม่ตรง",
-            "reason": "วันที่/เวลาการโอนในสลิปไม่ตรงกับเงื่อนไขที่ Slip2Go ตรวจสอบ",
+            "reason": "วันที่/เวลาการโอนในสลิปไม่ตรงกับเงื่อนไขที่ระบบตรวจสอบ",
             "suggestion": "ตรวจวันที่สลิป หรือให้ลูกค้าส่งสลิปล่าสุดอีกครั้ง",
         },
         "not_found": {
             "title": "⏳ ยังไม่พบข้อมูลสลิป",
             "status": "ยังไม่เติมเครดิต",
-            "reason": "Slip2Go ยังไม่พบข้อมูลสลิปในระบบธนาคาร",
+            "reason": "ระบบยังไม่พบข้อมูลสลิปในระบบธนาคาร",
             "suggestion": "ถ้าเพิ่งโอน ให้รอ 2-3 นาที แล้วส่งสลิปใหม่อีกครั้ง",
         },
         "fraud": {
             "title": "🚫 สลิปไม่ผ่านการตรวจสอบ",
             "status": "สลิปเสี่ยง/สลิปเสีย",
-            "reason": "Slip2Go แจ้งว่าสลิปเสี่ยงเป็นสลิปปลอมหรือสลิปเสีย",
+            "reason": "ระบบแจ้งว่าสลิปเสี่ยงเป็นสลิปปลอมหรือสลิปเสีย",
             "suggestion": "ให้ลูกค้าส่งหลักฐานใหม่ หรือให้แอดมินตรวจสอบก่อนเติมเครดิตเอง",
         },
         "duplicate": {
             "title": "⚠️ สลิปซ้ำ",
             "status": "ไม่เติมซ้ำ",
-            "reason": "Slip2Go แจ้งว่าสลิปนี้ถูกใช้งานหรือตรวจซ้ำแล้ว",
+            "reason": "ระบบแจ้งว่าสลิปนี้ถูกใช้งานหรือตรวจซ้ำแล้ว",
             "suggestion": "ตรวจประวัติการเติมเครดิต หรือให้ลูกค้าส่งสลิปอื่น",
         },
         "not_valid": {
             "title": "❌ สลิปยังไม่ผ่านเงื่อนไข",
             "status": "ยังไม่เติมเครดิต",
             "reason": reject_msg,
-            "suggestion": "ระบบจะเติมเครดิตเฉพาะกรณี Slip2Go ตอบ 200200 / Slip is Valid เท่านั้น",
+            "suggestion": "ระบบจะเติมเครดิตเฉพาะสลิปที่ตรวจผ่านและยืนยันแล้วเท่านั้น",
         },
     }
 
     info = status_map.get(reject_type, status_map["not_valid"])
     details = [
-        ("Response", code, "#EF4444" if code not in {"200404", "200501"} else "#F59E0B"),
         ("สถานะ", info["status"], "#EF4444" if reject_type not in {"not_found", "duplicate"} else "#F59E0B"),
         ("สาเหตุ", info["reason"], "#374151"),
         ("คำแนะนำ", info["suggestion"], "#6B7280"),
     ]
 
     if reject_msg and reject_msg != info["reason"]:
-        details.insert(3, ("รายละเอียด", reject_msg, "#6B7280"))
+        details.insert(2, ("รายละเอียด", reject_msg, "#6B7280"))
 
     color = "#F59E0B" if reject_type in {"not_found", "duplicate"} else "#EF4444"
     emoji = "⏳" if reject_type == "not_found" else ("⚠️" if reject_type == "duplicate" else "❌")
@@ -5234,7 +5286,7 @@ def slip2go_reject_flex(data=None, reject_type: str = None, reject_msg: str = No
         color=color,
         emoji=emoji,
         details=details,
-        footer_text="ระบบเติมเครดิตให้อัตโนมัติเฉพาะสลิปที่ Slip2Go ยืนยันว่า Slip is Valid เท่านั้น",
+        footer_text="ระบบเติมเครดิตอัตโนมัติเฉพาะสลิปที่ตรวจผ่านแล้วเท่านั้น",
     )
 
 def should_silence_slip_reject(reject_type: str = None, message: str = "") -> bool:
@@ -5272,15 +5324,12 @@ def should_silence_slip_reject(reject_type: str = None, message: str = "") -> bo
 
 
 def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
-    """ลูกค้าส่งรูปสลิปในแชทส่วนตัวกับ OA -> ตรวจ Slip2Go -> เติมเครดิตอัตโนมัติ และตอบกลับเป็น Flex"""
+    """ลูกค้าส่งรูปสลิปในแชทส่วนตัวกับ OA -> ตรวจ EasySlip -> เติมเครดิตอัตโนมัติ และตอบกลับเป็น Flex"""
     if not is_private_chat(event):
-        # กันสลิป/ยอดเงินไปแสดงในกลุ่ม
         return None
 
     user_id = event.source.user_id
 
-    # ห้ามสร้าง ID สมาชิกใหม่จากการส่งสลิป
-    # ลูกค้าต้องมี ID อยู่ใน users.json ก่อนเท่านั้น จึงจะตรวจสลิปและเติมเครดิตได้
     with STATE_LOCK:
         user = get_registered_topup_user(user_id)
 
@@ -5299,72 +5348,60 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
             )
 
     if not is_likely_slip_image(image_bytes):
-        # รูปทั่วไป/รูป Flex/รูปแคปหน้าจอที่ไม่มี QR สลิป ให้เงียบ ไม่ส่งเข้า Slip2Go และไม่ขึ้น FLEX
         return None
 
-    ok, msg, data = call_slip2go_api(image_bytes)
-    if not ok:
-        # เคส ธ.กรุงเทพ: ข้อมูลธนาคารอาจยังไม่เข้าระบบ ให้แจ้งรอ ไม่เติมเครดิต และไม่บันทึกว่าใช้สลิปแล้ว
-        if isinstance(data, dict) and is_bangkok_bank_transfer(data):
-            return slip_bangkok_bank_wait_flex()
+    ok, msg, data = call_easyslip_api(image_bytes)
 
-        # ถ้า Slip2Go ตอบ 200404 / Slip not found ให้แจ้งรอส่งใหม่แทนการเงียบ
-        # โดยเฉพาะเคส ธ.กรุงเทพที่ข้อมูลมักเข้าระบบช้ากว่าธนาคารอื่น
-        if SLIP2GO_NOTIFY_NOT_FOUND and is_slip_not_found_response(message=msg):
+    if not ok:
+        # Timeout / network error
+        if isinstance(data, dict):
+            debug = data.get("_easyslip_debug", {})
+            err_type = debug.get("error_type", "")
+            if err_type in ("timeout", "connection_error"):
+                return slip_pending_retry_flex(
+                    "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน ระบบยังไม่เติมเครดิตและยังไม่บันทึกว่าสลิปนี้ถูกใช้แล้ว"
+                )
+
+        # V2: 404 + SLIP_PENDING = ธ.กรุงเทพยังไม่ sync
+        if msg == "slip_not_found" and isinstance(data, dict):
+            if easyslip_is_bbl_pending(data):
+                return slip_bangkok_bank_wait_flex()
+            # 404 ทั่วไป = หาสลิปไม่เจอในระบบ
+            error_code = easyslip_get_error_code(data)
+            if error_code == "SLIP_NOT_FOUND":
+                return slip_not_found_wait_flex()
             return slip_not_found_wait_flex()
 
-        # รูป/สลิปที่ไม่ควรเติมเครดิต เดิมเคยเงียบ ตอนนี้ให้ตอบ FLEX ทุกเคส
-        # เช่น บัญชีรับเงินไม่ตรง, สลิปปลอม/เสีย, ยอด/วันที่ไม่ตรง
-        if should_silence_slip_reject(message=msg):
-            return slip_fail_flex(
-                title="❌ สลิปไม่ผ่านการตรวจสอบ",
-                reason=msg,
-                suggestion="ระบบยังไม่เติมเครดิต ให้ตรวจสลิปหรือส่งรูปสลิปใหม่อีกครั้ง",
-            )
-
-        # Timeout/network ของ Slip2Go ไม่ใช่ .env ผิด: ให้แจ้งรอแล้วส่งใหม่ ไม่ขึ้นว่า "ตั้งค่าไม่ครบ"
-        if is_slip2go_network_issue(msg, data):
-            return slip_pending_retry_flex(
-                "Slip2Go ตอบช้าหรือเชื่อมต่อไม่ทัน ระบบยังไม่เติมเครดิตและยังไม่บันทึกว่าสลิปนี้ถูกใช้แล้ว"
-            )
-
-        # ถ้าเป็นปัญหาตั้งค่า/API ให้ใช้ Flex สีเทาแบบระบบ
-        # ห้ามใช้คำกว้าง ๆ เช่น "Slip2Go" เพราะ timeout ก็มีคำนี้ แล้วจะทำให้ขึ้นผิดว่า ตั้งค่าไม่ครบ
-        config_keywords = [".env", "TOKEN", "Authorization", "endpoint", "HTTP 401", "HTTP 403", "IP Whitelist", "ไม่ได้ตั้งค่า", "Secret Key"]
+        # ปัญหาตั้งค่า API
+        config_keywords = ["EASYSLIP_API_KEY", ".env", "HTTP 401", "HTTP 403", "ไม่ได้ตั้งค่า"]
         if any(k.lower() in str(msg).lower() for k in config_keywords):
             return slip_config_error_flex(msg)
+
         return slip_fail_flex(reason=msg, suggestion="ตรวจภาพสลิปให้ชัด หรือส่งใหม่อีกครั้ง")
 
     if not isinstance(data, dict):
         return slip_fail_flex(
-            reason="รูปแบบข้อมูลจาก Slip2Go ไม่ถูกต้อง",
-            suggestion="ให้แอดมินตรวจ response/debug จาก Slip2Go",
+            reason="รูปแบบข้อมูลจาก EasySlip ไม่ถูกต้อง",
+            suggestion="ให้แอดมินตรวจ response/debug จาก EasySlip",
         )
 
-    slip_ref, ref_path = extract_reference_from_slip2go(data, image_bytes)
+    # ── V2: ตรวจสถานะ verified ──────────────────────────────────────────────────
+    if not easyslip_is_verified(data):
+        error_code = easyslip_get_error_code(data)
+        if error_code == "SLIP_PENDING" or is_bangkok_bank_transfer(data):
+            return slip_bangkok_bank_wait_flex()
+        if error_code == "SLIP_NOT_FOUND":
+            return slip_not_found_wait_flex()
+        reason = f"ระบบยังไม่ยืนยันสลิป" + (f" ({error_code})" if error_code else "")
+        return slip2go_reject_flex(data, "not_valid", reason)
 
-    reject_type, reject_msg = slip2go_reject_reason(data)
+    # ── V2: ตรวจสลิปซ้ำจาก EasySlip ก่อน (isDuplicate) ────────────────────────
+    slip_ref, ref_path = easyslip_extract_reference(data, image_bytes)
 
-    # เคส ธ.กรุงเทพที่ Slip2Go ยังไม่ยืนยัน/ยังไม่พบข้อมูล ให้ลูกค้ารอแล้วส่งสลิปใหม่
-    # ไม่เติมเครดิตจนกว่า Slip2Go จะตรวจผ่านจริง
-    if is_bangkok_bank_transfer(data) and reject_type in {"not_found", "not_valid"}:
-        return slip_bangkok_bank_wait_flex()
-
-    # ถ้า Slip2Go ตอบ 200404 / Slip not found ให้แจ้งรอส่งใหม่ ไม่เติมเครดิต และไม่บันทึกเป็นสลิปใช้แล้ว
-    if SLIP2GO_NOTIFY_NOT_FOUND and is_slip_not_found_response(reject_type, reject_msg):
-        return slip_not_found_wait_flex()
-
-    # ถ้ารูป/สลิปไม่ผ่านเงื่อนไขร้าน ต้องตอบ FLEX ทุกเคส
-    # เช่น 200401 บัญชีผู้รับไม่ตรง / 200402 ยอดไม่ตรง / 200403 วันที่ไม่ตรง / 200500 สลิปปลอม
-    if should_silence_slip_reject(reject_type, reject_msg):
-        return slip2go_reject_flex(data, reject_type, reject_msg)
-
-    if is_slip2go_duplicate(data) or reject_type == "duplicate":
-        # สำคัญ: ให้แจ้งว่าสลิปซ้ำเฉพาะสลิปที่บอทนี้เคยเติมเครดิตสำเร็จแล้วเท่านั้น
-        # ถ้า Slip2Go ตอบซ้ำ แต่บอทยังไม่เคยเติมเครดิต เช่น เคส ธ.กรุงเทพซิงก์ช้า ให้แจ้งรอแทน ไม่ใช่ขึ้นซ้ำ
+    if easyslip_is_duplicate(data):
+        # เช็คว่าบอทเคยเติมจริงหรือยัง
         with STATE_LOCK:
             old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
-
         if old:
             return slip_warning_flex(
                 title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
@@ -5372,32 +5409,25 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
                 slip_ref=slip_ref,
                 created_at=old.get("created_at", "-"),
             )
+        # EasySlip บอกซ้ำแต่บอทยังไม่เคยเติม (เช่น เคยส่งตรวจแล้วระบบ error ก่อนเติม)
+        return slip_pending_retry_flex("ระบบพบว่าสลิปนี้ถูกตรวจไปแล้ว แต่บอทยังไม่เคยเติมเครดิตจากสลิปนี้")
 
-        if is_bangkok_bank_transfer(data):
-            return slip_bangkok_bank_wait_flex()
+    # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ──────────────────────────────────────
+    with STATE_LOCK:
+        old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
+    if old:
+        return slip_warning_flex(
+            title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
+            message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
+            slip_ref=slip_ref,
+            created_at=old.get("created_at", "-"),
+        )
 
-        # Slip2Go บอกซ้ำ แต่ระบบนี้ยังไม่เคยเติมเครดิตสำเร็จใน slip_topups.json
-        # เดิมเคย return None ทำให้ลูกค้าเห็นว่าบอทเงียบ
-        # แก้เป็นแจ้งรอ/ส่งใหม่ โดยไม่ใช้คำว่า "สลิปซ้ำ" เพราะบอทยังไม่ได้เติมเครดิตจริง
-        return slip_pending_retry_flex("Slip2Go แจ้งว่าสลิปนี้ถูกตรวจไปแล้ว แต่ระบบบอทยังไม่เคยเติมเครดิตจากสลิปนี้")
-
-    if not receiver_check_passed(data):
+    # ── ตรวจบัญชีผู้รับ ──────────────────────────────────────────────────────────
+    if not easyslip_receiver_check_passed(data):
         return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
 
-    if reject_type:
-        return slip2go_reject_flex(data, reject_type, reject_msg)
-
-    if not is_slip2go_verified(data):
-        # เคส ธ.กรุงเทพที่ยังตรวจไม่ผ่าน ให้แจ้งรอ 2-3 นาทีแล้วส่งใหม่
-        if is_bangkok_bank_transfer(data):
-            return slip_bangkok_bank_wait_flex()
-
-        # ไม่ผ่าน / ไม่ใช่สลิป / ยังไม่ valid ต้องมี FLEX แจ้งลูกค้า
-        code, _ = get_slip2go_response_code(data)
-        reason = f"Slip2Go ยังไม่ได้ยืนยันว่าเป็น Slip is Valid" + (f" (code: {code})" if code else "")
-        return slip2go_reject_flex(data, "not_valid", reason)
-
-    amount, amount_path = extract_amount_from_slip2go(data)
+    amount, amount_path = easyslip_extract_amount(data)
     if amount is None or amount < MIN_TOPUP_AMOUNT:
         return slip_fail_flex(
             title="❌ อ่านยอดเงินไม่ได้",
@@ -5443,7 +5473,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
             "amount_path": amount_path,
             "line_message_id": message_id,
             "created_at": now_text(),
-            "slip2go_response": data,
+            "easyslip_response": data,
         }
 
         save_user_db()
