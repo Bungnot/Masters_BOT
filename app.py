@@ -6744,7 +6744,7 @@ def matched_flex_for_user(match, viewer_id):
                         {"type": "text", "text": "✅ จับคู่สำเร็จ",
                          "weight": "bold", "size": "md", "color": "#FFFFFF"},
                         {"type": "text", "text": f"Order #{match['order_no']}",
-                         "size": "xs", "color": "rgba(255,255,255,0.7)"},
+                         "size": "xs", "color": "#ccffd4"},
                     ]
                 },
                 {
@@ -6753,7 +6753,7 @@ def matched_flex_for_user(match, viewer_id):
                         {"type": "text", "text": f"{match['amount']:,}",
                          "weight": "bold", "size": "xl", "color": "#FFFFFF"},
                         {"type": "text", "text": "บาท",
-                         "size": "xs", "color": "rgba(255,255,255,0.7)"},
+                         "size": "xs", "color": "#ccffd4"},
                     ]
                 },
             ],
