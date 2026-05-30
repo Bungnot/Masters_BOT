@@ -4969,17 +4969,117 @@ def slip_status_flex(title, subtitle, status_text, color="#3B82F6", emoji="🔎"
     }
 
 
+def bank_logo_url(short_code: str) -> str:
+    """
+    คืน URL โลโก้ธนาคารจาก short code เช่น KBANK, SCB, BBL
+    ใช้ route /banks/<code>.png ที่โฮสต์บน Railway เอง
+    LINE Flex รองรับ URL จาก domain เดียวกับ webhook
+    """
+    short_to_key = {
+        "BBL":      "bbl",
+        "KBANK":    "kbank",
+        "KTB":      "ktb",
+        "TTB":      "ttb",
+        "SCB":      "scb",
+        "BAY":      "bay",
+        "GSB":      "gsb",
+        "GHB":      "ghb",
+        "BAAC":     "baac",
+        "UOB":      "uob",
+        "CIMBT":    "cimbt",
+        "TISCO":    "tisco",
+        "KKP":      "kkp",
+        "ICBCT":    "icbct",
+        "TCD":      "tcd",
+        "LH":       "lh",
+        "ISBT":     "isbt",
+        "MHCB":     "mhcb",
+        "SCBT":     "scbt",
+        "CITI":     "citi",
+        "BNPP":     "bnpp",
+        "BOC":      "boc",
+        "TRUEMONEY":"truemoney",
+        "TMW":      "truemoney",
+    }
+    key = short_to_key.get(str(short_code or "").upper().strip())
+    if not key:
+        return ""
+    # ดึง base URL จาก env (Railway จะตั้งค่า RAILWAY_PUBLIC_DOMAIN อัตโนมัติ)
+    base = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if not base:
+        base = os.getenv("PUBLIC_URL", "").strip()
+    if not base:
+        return ""
+    base = base.rstrip("/")
+    if not base.startswith("http"):
+        base = "https://" + base
+    return f"{base}/banks/{key}.png"
+
+
+def bank_logo_component(short_code: str, size: str = "28px") -> dict:
+    """สร้าง LINE Flex image component โลโก้ธนาคาร"""
+    url = bank_logo_url(short_code)
+    if not url:
+        return None
+    return {
+        "type": "image",
+        "url": url,
+        "size": size,
+        "aspectMode": "fit",
+        "aspectRatio": "1:1",
+        "flex": 0,
+    }
+
+
+def bank_row(label: str, name: str, short_code: str, name_color: str = "#111111") -> dict:
+    """
+    แถว ผู้โอน/ผู้รับ พร้อมโลโก้ธนาคาร
+    Layout: [label]  [โลโก้] [ชื่อ · ชื่อธนาคาร]
+    """
+    logo = bank_logo_component(short_code)
+    name_text = name or "-"
+    bank_label = short_code or ""
+
+    name_contents = []
+    if logo:
+        name_contents.append(logo)
+    name_contents.append({
+        "type": "box", "layout": "vertical", "spacing": "none", "flex": 1,
+        "contents": [
+            {"type": "text", "text": name_text, "size": "sm",
+             "color": name_color, "weight": "bold", "wrap": True},
+            {"type": "text", "text": bank_label, "size": "xxs",
+             "color": "#9CA3AF", "wrap": False} if bank_label else
+            {"type": "filler"},
+        ],
+    })
+
+    return {
+        "type": "box", "layout": "horizontal", "spacing": "sm", "margin": "sm",
+        "alignItems": "center",
+        "contents": [
+            {"type": "text", "text": label, "size": "sm", "color": "#6B7280",
+             "flex": 3, "wrap": True},
+            {
+                "type": "box", "layout": "horizontal", "flex": 6,
+                "spacing": "sm", "alignItems": "center",
+                "contents": name_contents,
+            },
+        ],
+    }
+
+
 def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_data=None):
     member_name = target.get("line_name") or target.get("name") or "User"
     member_no   = str(target.get("member_no") or "-")
     new_credit  = int(target.get("credit", 0) or 0)
 
     # ── ดึงข้อมูลผู้โอน / ผู้รับจาก EasySlip V2 ──────────────────────────────
-    sender_name     = ""
-    sender_bank     = ""
-    receiver_name   = ""
-    receiver_bank   = ""
-    trans_ref_short = ""
+    sender_name      = ""
+    sender_short     = ""
+    receiver_name    = ""
+    receiver_short   = ""
+    trans_ref_short  = ""
 
     if isinstance(slip_data, dict):
         try:
@@ -4988,31 +5088,28 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
             s = raw.get("sender", {})
             sender_name = (
                 s.get("account", {}).get("name", {}).get("th")
-                or s.get("account", {}).get("name", {}).get("en")
-                or ""
+                or s.get("account", {}).get("name", {}).get("en") or ""
             )
-            sender_bank = s.get("bank", {}).get("short") or s.get("bank", {}).get("name") or ""
+            sender_short = s.get("bank", {}).get("short") or ""
 
             r = raw.get("receiver", {})
             receiver_name = (
                 r.get("account", {}).get("name", {}).get("th")
-                or r.get("account", {}).get("name", {}).get("en")
-                or ""
+                or r.get("account", {}).get("name", {}).get("en") or ""
             )
-            receiver_bank = r.get("bank", {}).get("short") or r.get("bank", {}).get("name") or ""
+            receiver_short = r.get("bank", {}).get("short") or ""
 
             ref = raw.get("transRef") or ""
             trans_ref_short = ref[:8] + "..." + ref[-6:] if len(ref) > 16 else ref
         except Exception:
             pass
 
-    # ── helper ────────────────────────────────────────────────────────────────
-    def row(label, value, val_color="#111111", label_color="#6B7280"):
+    # ── helpers ───────────────────────────────────────────────────────────────
+    def row(label, value, val_color="#111111"):
         return {
-            "type": "box", "layout": "horizontal", "spacing": "sm",
-            "margin": "sm",
+            "type": "box", "layout": "horizontal", "spacing": "sm", "margin": "sm",
             "contents": [
-                {"type": "text", "text": label, "size": "sm", "color": label_color,
+                {"type": "text", "text": label, "size": "sm", "color": "#6B7280",
                  "flex": 4, "wrap": True},
                 {"type": "text", "text": str(value) if value else "-",
                  "size": "sm", "color": val_color, "flex": 6,
@@ -5027,17 +5124,16 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
     def divider():
         return {"type": "separator", "margin": "md", "color": "#F3F4F6"}
 
-    # ── body contents ─────────────────────────────────────────────────────────
+    # ── body ──────────────────────────────────────────────────────────────────
     body = []
 
-    # ยอดเครดิตที่ได้ (hero)
+    # Hero: ยอดเครดิต
     body.append({
         "type": "box", "layout": "vertical", "alignItems": "center",
         "paddingBottom": "12px",
         "contents": [
             {"type": "text", "text": "💰", "size": "3xl", "align": "center"},
-            {"type": "text",
-             "text": f"+{credit_to_add:,} เครดิต",
+            {"type": "text", "text": f"+{credit_to_add:,} เครดิต",
              "size": "xxl", "weight": "bold", "color": "#16A34A",
              "align": "center", "margin": "sm"},
             {"type": "text", "text": "ระบบเติมเครดิตให้อัตโนมัติแล้ว",
@@ -5047,21 +5143,19 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
 
     body.append(divider())
 
-    # ── ข้อมูลสลิป ───────────────────────────────────────────────────────────
+    # ข้อมูลการโอน
     body.append(section_label("📋  ข้อมูลการโอน"))
     body.append(row("ยอดโอน", f"{format_topup_amount(amount)} บาท", "#16A34A"))
     if sender_name:
-        body.append(row("ผู้โอน",
-                        f"{sender_name}{(' · ' + sender_bank) if sender_bank else ''}"))
+        body.append(bank_row("ผู้โอน", sender_name, sender_short))
     if receiver_name:
-        body.append(row("ผู้รับ",
-                        f"{receiver_name}{(' · ' + receiver_bank) if receiver_bank else ''}"))
+        body.append(bank_row("ผู้รับ", receiver_name, receiver_short))
     if trans_ref_short:
         body.append(row("เลขอ้างอิง", trans_ref_short, "#9CA3AF"))
 
     body.append(divider())
 
-    # ── ข้อมูลสมาชิก ─────────────────────────────────────────────────────────
+    # ข้อมูลสมาชิก
     body.append(section_label("👤  ข้อมูลสมาชิก"))
     body.append(row("ชื่อ", member_name))
     body.append(row("ID", member_no))
@@ -5080,11 +5174,8 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
         "type": "bubble",
         "size": "mega",
         "header": {
-            "type": "box",
-            "layout": "horizontal",
-            "backgroundColor": "#16A34A",
-            "paddingAll": "16px",
-            "spacing": "sm",
+            "type": "box", "layout": "horizontal",
+            "backgroundColor": "#16A34A", "paddingAll": "16px", "spacing": "sm",
             "contents": [
                 {"type": "text", "text": "✅", "size": "lg", "flex": 0},
                 {"type": "text", "text": "ตรวจสลิปสำเร็จ",
@@ -5093,10 +5184,8 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
             ],
         },
         "body": {
-            "type": "box",
-            "layout": "vertical",
-            "paddingAll": "18px",
-            "spacing": "none",
+            "type": "box", "layout": "vertical",
+            "paddingAll": "18px", "spacing": "none",
             "contents": body,
         },
     }
@@ -5522,23 +5611,37 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
                 slip_ref=slip_ref,
                 created_at=old.get("created_at", "-"),
             )
-        # EasySlip บอกซ้ำแต่บอทยังไม่เคยเติม (เช่น เคยส่งตรวจแล้วระบบ error ก่อนเติม)
-        return slip_pending_retry_flex("ระบบพบว่าสลิปนี้ถูกตรวจไปแล้ว แต่บอทยังไม่เคยเติมเครดิตจากสลิปนี้")
+        # EasySlip บอกซ้ำ แต่บอทยังไม่เคยเติม
+        # หมายความว่าลูกค้าส่งสลิปซ้ำก่อนบอทจะเติมได้ (เช่น ครั้งแรก error ระหว่างทาง)
+        # ให้พยายามเติมให้เลย โดยข้ามการตรวจบัญชีซ้ำจาก EasySlip
+        # (EasySlip ไม่คืน rawSlip ครบในเคส duplicate บางครั้ง)
+        if EASYSLIP_DEBUG_MODE:
+            print(f"EASYSLIP DUPLICATE but not in local DB: slip_ref={slip_ref}, proceeding to topup")
+        # ตกไปที่โค้ดเติมเครดิตด้านล่างโดยตรง (ไม่ return ที่นี่)
 
-    # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ──────────────────────────────────────
-    with STATE_LOCK:
-        old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
-    if old:
-        return slip_warning_flex(
-            title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
-            message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
-            slip_ref=slip_ref,
-            created_at=old.get("created_at", "-"),
-        )
+    else:
+        # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ──────────────────────────────────────
+        with STATE_LOCK:
+            old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
+        if old:
+            return slip_warning_flex(
+                title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
+                message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
+                slip_ref=slip_ref,
+                created_at=old.get("created_at", "-"),
+            )
 
-    # ── ตรวจบัญชีผู้รับ ──────────────────────────────────────────────────────────
-    if not easyslip_receiver_check_passed(data):
-        return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
+        # ── ตรวจบัญชีผู้รับ (เฉพาะกรณีไม่ใช่ duplicate) ────────────────────────────
+        if not easyslip_receiver_check_passed(data):
+            if EASYSLIP_DEBUG_MODE:
+                try:
+                    raw = data.get("data", {}).get("rawSlip") or {}
+                    r = raw.get("receiver", {})
+                    acct = r.get("account", {})
+                    print(f"EASYSLIP RECEIVER FAIL: bank={acct.get('bank')}, proxy={acct.get('proxy')}, name={acct.get('name')}, expected={EASYSLIP_ACCOUNT_NUMBER}")
+                except Exception:
+                    pass
+            return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
 
     amount, amount_path = easyslip_extract_amount(data)
     if amount is None or amount < MIN_TOPUP_AMOUNT:
@@ -10586,8 +10689,62 @@ def home():
 
 
 # ======================================================
-# ADMIN PANEL
+# Bank logo static route
+# เสิร์ฟโลโก้ธนาคารเป็น SVG จาก Railway เอง
+# LINE Flex รองรับ URL จาก domain เดียวกับ webhook แน่นอน
 # ======================================================
+_BANK_SVG_DATA = {
+    "bbl":      ("#1e3a8a", "BBL"),
+    "kbank":    ("#1a5f2a", "K"),
+    "ktb":      ("#009a44", "KTB"),
+    "ttb":      ("#ff6b00", "TTB"),
+    "scb":      ("#4a1e8a", "SCB"),
+    "bay":      ("#ffd700", "BAY"),
+    "gsb":      ("#eb008b", "GSB"),
+    "ghb":      ("#f15a24", "GHB"),
+    "baac":     ("#2e7d32", "BAAC"),
+    "uob":      ("#003087", "UOB"),
+    "cimbt":    ("#c8102e", "CIMB"),
+    "tisco":    ("#003087", "TISCO"),
+    "kkp":      ("#1565c0", "KKP"),
+    "icbct":    ("#c8102e", "ICBC"),
+    "tcd":      ("#e53935", "TCD"),
+    "lh":       ("#1976d2", "LH"),
+    "isbt":     ("#2e7d32", "IBANK"),
+    "mhcb":     ("#c8102e", "MHB"),
+    "scbt":     ("#0066cc", "SC"),
+    "citi":     ("#003087", "CITI"),
+    "bnpp":     ("#009b4e", "BNP"),
+    "boc":      ("#c8102e", "BOC"),
+    "truemoney":("#ff6b00", "TW"),
+}
+
+def _make_bank_svg(color: str, abbr: str) -> bytes:
+    fs = 18 if len(abbr) >= 4 else 22
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80">'
+        f'<rect width="80" height="80" rx="16" fill="{color}"/>'
+        f'<text x="40" y="41" font-family="Arial,sans-serif" font-size="{fs}" '
+        f'font-weight="bold" fill="white" text-anchor="middle" dominant-baseline="middle">{abbr}</text>'
+        f'</svg>'
+    )
+    return svg.encode("utf-8")
+
+@app.route("/banks/<bank_code>.png", methods=["GET"])
+def bank_logo(bank_code):
+    from flask import Response
+    key = str(bank_code or "").lower().replace(".png", "")
+    entry = _BANK_SVG_DATA.get(key)
+    if not entry:
+        # คืน placeholder สีเทา
+        color, abbr = "#9CA3AF", "?"
+    else:
+        color, abbr = entry
+    svg_bytes = _make_bank_svg(color, abbr)
+    return Response(svg_bytes, mimetype="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 ADMIN_PANEL_TOKEN = os.getenv("ADMIN_PANEL_TOKEN", "").strip()
 
 def check_admin_token(req):
@@ -10596,177 +10753,657 @@ def check_admin_token(req):
         return False
     return token == ADMIN_PANEL_TOKEN
 
-@app.route("/admin", methods=["GET"])
-def admin_panel():
-    if not check_admin_token(request):
-        return "Unauthorized", 401
-    html = """<!DOCTYPE html>
+ADMIN_HTML = r"""
+<!DOCTYPE html>
 <html lang="th">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin Panel</title>
+<title>OG Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-  .header { background: #1e293b; padding: 16px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #334155; }
-  .header h1 { font-size: 20px; font-weight: 700; color: #38bdf8; }
-  .container { padding: 24px; max-width: 1000px; margin: 0 auto; }
-  .search-bar { width: 100%; padding: 10px 16px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 15px; margin-bottom: 20px; outline: none; }
-  .search-bar:focus { border-color: #38bdf8; }
-  .stats { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-  .stat-card { background: #1e293b; border-radius: 10px; padding: 16px 24px; flex: 1; min-width: 140px; border: 1px solid #334155; }
-  .stat-card .label { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
-  .stat-card .value { font-size: 24px; font-weight: 700; color: #38bdf8; }
-  table { width: 100%; border-collapse: collapse; }
-  th { background: #1e293b; padding: 12px 16px; text-align: left; font-size: 13px; color: #94a3b8; border-bottom: 1px solid #334155; }
-  td { padding: 12px 16px; border-bottom: 1px solid #1e293b; font-size: 14px; }
-  tr:hover td { background: #1e293b; }
-  .credit { font-weight: 700; color: #4ade80; }
-  .credit.zero { color: #64748b; }
-  .btn { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity .15s; }
-  .btn:hover { opacity: .8; }
-  .btn-add { background: #22c55e; color: #fff; }
-  .btn-sub { background: #ef4444; color: #fff; }
-  .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100; align-items: center; justify-content: center; }
-  .modal-bg.open { display: flex; }
-  .modal { background: #1e293b; border-radius: 12px; padding: 28px; width: 340px; border: 1px solid #334155; }
-  .modal h2 { font-size: 18px; margin-bottom: 16px; color: #38bdf8; }
-  .modal label { font-size: 13px; color: #94a3b8; display: block; margin-bottom: 6px; }
-  .modal input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; margin-bottom: 16px; outline: none; }
-  .modal input:focus { border-color: #38bdf8; }
-  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
-  .btn-cancel { background: #334155; color: #e2e8f0; }
-  .btn-confirm { background: #38bdf8; color: #0f172a; }
-  .toast { position: fixed; bottom: 24px; right: 24px; background: #22c55e; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; display: none; z-index: 200; }
-  .toast.error { background: #ef4444; }
-  .loading { text-align: center; padding: 40px; color: #64748b; }
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a26;
+  --surface3: #22223a;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --text: #f0f0ff;
+  --text2: #9090b0;
+  --text3: #5a5a7a;
+  --accent: #7c6bff;
+  --accent2: #5b4de0;
+  --green: #22d37f;
+  --green2: #16a34a;
+  --red: #ff5e7a;
+  --red2: #c0233a;
+  --amber: #f5a623;
+  --blue: #4bb8ff;
+  --radius: 14px;
+  --radius-sm: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Sarabun', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; }
+
+/* Sidebar */
+.sidebar {
+  width: 220px; min-height: 100vh; background: var(--surface);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+}
+.logo {
+  padding: 24px 20px 20px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.logo-icon { width: 34px; height: 34px; background: var(--accent); border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+.logo-text { font-family: 'Space Grotesk', sans-serif; font-size: 17px; font-weight: 700; color: var(--text); }
+.logo-sub { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.nav { padding: 14px 10px; flex: 1; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; color: var(--text2); font-size: 14px; font-weight: 500;
+  transition: all .15s; margin-bottom: 2px; user-select: none; border: none; background: none; width: 100%; text-align: left;
+}
+.nav-item:hover { background: var(--surface2); color: var(--text); }
+.nav-item.active { background: rgba(124,107,255,0.15); color: var(--accent); }
+.nav-item .icon { font-size: 17px; width: 22px; text-align: center; }
+.nav-badge { margin-left: auto; background: var(--accent); color: #fff; border-radius: 20px;
+  font-size: 11px; font-weight: 600; padding: 1px 7px; }
+.sidebar-footer { padding: 16px; border-top: 1px solid var(--border); }
+.bot-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+/* Main */
+.main { margin-left: 220px; flex: 1; min-height: 100vh; }
+.topbar {
+  height: 60px; background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 28px;
+  position: sticky; top: 0; z-index: 40;
+}
+.page-title { font-family: 'Space Grotesk', sans-serif; font-size: 17px; font-weight: 600; }
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.refresh-btn {
+  background: var(--surface2); border: 1px solid var(--border2); color: var(--text2);
+  padding: 7px 14px; border-radius: var(--radius-sm); font-size: 13px; cursor: pointer;
+  transition: all .15s; font-family: 'Sarabun', sans-serif;
+}
+.refresh-btn:hover { background: var(--surface3); color: var(--text); }
+.content { padding: 24px 28px; }
+
+/* Stat cards */
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px; position: relative; overflow: hidden;
+}
+.stat-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--accent-color, var(--accent));
+}
+.stat-label { font-size: 12px; color: var(--text3); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+.stat-value { font-family: 'Space Grotesk', sans-serif; font-size: 28px; font-weight: 700; color: var(--accent-color, var(--text)); }
+.stat-sub { font-size: 12px; color: var(--text3); margin-top: 4px; }
+.stat-icon { position: absolute; top: 18px; right: 18px; font-size: 22px; opacity: .25; }
+
+/* Section */
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 20px; overflow: hidden; }
+.section-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.section-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.section-title .icon { font-size: 16px; }
+.section-actions { display: flex; gap: 8px; }
+
+/* Search */
+.search-wrap { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.search-input {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  padding: 9px 14px 9px 36px; border-radius: var(--radius-sm); font-size: 14px; outline: none;
+  font-family: 'Sarabun', sans-serif; transition: border .15s;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-wrap { position: relative; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.search-icon { position: absolute; left: 32px; top: 50%; transform: translateY(-50%); color: var(--text3); font-size: 15px; pointer-events: none; }
+
+/* Table */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { padding: 11px 18px; text-align: left; font-size: 12px; color: var(--text3); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+td { padding: 12px 18px; border-top: 1px solid var(--border); font-size: 14px; white-space: nowrap; }
+tr:hover td { background: rgba(255,255,255,.02); }
+.member-no { font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--accent); font-size: 13px; }
+.credit-val { font-family: 'Space Grotesk', sans-serif; font-weight: 700; color: var(--green); }
+.credit-val.zero { color: var(--text3); }
+.name-cell { display: flex; align-items: center; gap: 10px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.action-btns { display: flex; gap: 6px; }
+
+/* Buttons */
+.btn { padding: 6px 13px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px;
+  font-weight: 600; transition: all .15s; font-family: 'Sarabun', sans-serif; display: inline-flex; align-items: center; gap: 5px; }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn-green { background: rgba(34,211,127,.15); color: var(--green); border: 1px solid rgba(34,211,127,.3); }
+.btn-green:hover { background: rgba(34,211,127,.25); }
+.btn-red { background: rgba(255,94,122,.15); color: var(--red); border: 1px solid rgba(255,94,122,.3); }
+.btn-red:hover { background: rgba(255,94,122,.25); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent2); }
+.btn-ghost { background: var(--surface2); color: var(--text2); border: 1px solid var(--border2); }
+.btn-ghost:hover { background: var(--surface3); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* Badge */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-green { background: rgba(34,211,127,.15); color: var(--green); }
+.badge-red { background: rgba(255,94,122,.15); color: var(--red); }
+.badge-amber { background: rgba(245,166,35,.15); color: var(--amber); }
+.badge-blue { background: rgba(75,184,255,.15); color: var(--blue); }
+.badge-purple { background: rgba(124,107,255,.15); color: var(--accent); }
+
+/* Modal */
+.overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+.overlay.open { display: flex; }
+.modal-box {
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 18px;
+  padding: 28px; width: 380px; max-width: 95vw; animation: pop .2s ease;
+}
+@keyframes pop { from { transform: scale(.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal-title { font-family: 'Space Grotesk', sans-serif; font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+.modal-field { margin-bottom: 16px; }
+.modal-field label { font-size: 12px; color: var(--text3); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 6px; }
+.modal-input {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  padding: 10px 14px; border-radius: var(--radius-sm); font-size: 15px; outline: none;
+  font-family: 'Sarabun', sans-serif; transition: border .15s;
+}
+.modal-input:focus { border-color: var(--accent); }
+.modal-input[readonly] { color: var(--text2); cursor: default; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+
+/* Toast */
+.toast-wrap { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: var(--surface); border: 1px solid var(--border2); color: var(--text);
+  padding: 12px 18px; border-radius: 10px; font-size: 14px; font-weight: 500;
+  display: flex; align-items: center; gap: 10px; min-width: 220px;
+  animation: slideIn .25s ease; box-shadow: 0 4px 24px rgba(0,0,0,.4);
+}
+@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.toast-success { border-left: 3px solid var(--green); }
+.toast-error { border-left: 3px solid var(--red); }
+
+/* Tabs */
+.page { display: none; }
+.page.active { display: block; }
+
+/* Slip history */
+.slip-ref { font-family: 'Space Grotesk', sans-serif; font-size: 11px; color: var(--text3); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.amount-cell { font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--amber); }
+
+/* Profit */
+.profit-total { font-family: 'Space Grotesk', sans-serif; font-size: 36px; font-weight: 700; color: var(--green); }
+.profit-row-camp { font-weight: 600; color: var(--blue); }
+
+/* Loading */
+.loading-row td { text-align: center; padding: 40px; color: var(--text3); }
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty */
+.empty { text-align: center; padding: 48px 20px; color: var(--text3); }
+.empty-icon { font-size: 36px; margin-bottom: 8px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 10px; }
+
+@media (max-width: 900px) {
+  .sidebar { width: 60px; }
+  .logo-text, .logo-sub, .nav-item span:not(.icon), .nav-badge, .bot-status span { display: none; }
+  .main { margin-left: 60px; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .nav-item { justify-content: center; padding: 12px; }
+}
+@media (max-width: 600px) {
+  .stats-grid { grid-template-columns: 1fr; }
+  .content { padding: 16px; }
+}
 </style>
 </head>
 <body>
-<div class="header">
-  <div>💎</div>
-  <h1>Admin Panel</h1>
-</div>
-<div class="container">
-  <div class="stats">
-    <div class="stat-card"><div class="label">สมาชิกทั้งหมด</div><div class="value" id="total-users">-</div></div>
-    <div class="stat-card"><div class="label">เครดิตรวม</div><div class="value" id="total-credit">-</div></div>
-    <div class="stat-card"><div class="label">มีเครดิต > 0</div><div class="value" id="active-users">-</div></div>
-  </div>
-  <input class="search-bar" id="search" placeholder="🔍 ค้นหาชื่อ หรือ ID สมาชิก..." oninput="filterUsers()">
-  <table>
-    <thead>
-      <tr><th>ID</th><th>ชื่อ</th><th>เครดิต</th><th>จัดการ</th></tr>
-    </thead>
-    <tbody id="user-table"><tr><td colspan="4" class="loading">กำลังโหลด...</td></tr></tbody>
-  </table>
-</div>
 
-<div class="modal-bg" id="modal">
-  <div class="modal">
-    <h2 id="modal-title">แก้ไขเครดิต</h2>
-    <label>ชื่อสมาชิก</label>
-    <input id="modal-name" readonly>
-    <label>จำนวนเครดิต</label>
-    <input id="modal-amount" type="number" min="1" placeholder="ใส่จำนวน..." oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-icon">💎</div>
+    <div>
+      <div class="logo-text">OG Admin</div>
+      <div class="logo-sub">Management Panel</div>
+    </div>
+  </div>
+  <nav class="nav">
+    <button class="nav-item active" onclick="switchPage('dashboard')">
+      <span class="icon">📊</span><span>ภาพรวม</span>
+    </button>
+    <button class="nav-item" onclick="switchPage('members')">
+      <span class="icon">👥</span><span>สมาชิก</span>
+      <span class="nav-badge" id="nav-members-count">-</span>
+    </button>
+    <button class="nav-item" onclick="switchPage('slips')">
+      <span class="icon">🧾</span><span>ประวัติสลิป</span>
+    </button>
+    <button class="nav-item" onclick="switchPage('profit')">
+      <span class="icon">💰</span><span>ยอดกำไร</span>
+    </button>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="bot-status">
+      <div class="status-dot"></div>
+      <span>Bot Online</span>
+    </div>
+  </div>
+</aside>
+
+<!-- Main -->
+<main class="main">
+  <div class="topbar">
+    <div class="page-title" id="page-title">ภาพรวม</div>
+    <div class="topbar-actions">
+      <button class="refresh-btn" onclick="refreshAll()">🔄 รีเฟรช</button>
+    </div>
+  </div>
+
+  <!-- ── DASHBOARD ── -->
+  <div class="content page active" id="page-dashboard">
+    <div class="stats-grid">
+      <div class="stat-card" style="--accent-color: var(--accent)">
+        <div class="stat-icon">👥</div>
+        <div class="stat-label">สมาชิกทั้งหมด</div>
+        <div class="stat-value" id="s-total">-</div>
+        <div class="stat-sub" id="s-active">โหลด...</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--green)">
+        <div class="stat-icon">💳</div>
+        <div class="stat-label">เครดิตรวม</div>
+        <div class="stat-value" id="s-credit">-</div>
+        <div class="stat-sub">เครดิตในระบบ</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--amber)">
+        <div class="stat-icon">🧾</div>
+        <div class="stat-label">สลิปทั้งหมด</div>
+        <div class="stat-value" id="s-slips">-</div>
+        <div class="stat-sub" id="s-slips-amount">ยอดรวม</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--blue)">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">กำไรสะสม</div>
+        <div class="stat-value" id="s-profit">-</div>
+        <div class="stat-sub" id="s-profit-rounds">รอบ</div>
+      </div>
+    </div>
+
+    <!-- Top members -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title"><span class="icon">🏆</span> Top เครดิตสูงสุด</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#ID</th><th>ชื่อ</th><th>เครดิต</th><th>จัดการ</th></tr></thead>
+          <tbody id="top-table"><tr class="loading-row"><td colspan="4"><span class="spin">⟳</span> กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Recent slips -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title"><span class="icon">🕐</span> สลิปล่าสุด</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>สมาชิก</th><th>ยอดโอน</th><th>เครดิต</th><th>เวลา</th></tr></thead>
+          <tbody id="recent-slips-table"><tr class="loading-row"><td colspan="4"><span class="spin">⟳</span></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MEMBERS ── -->
+  <div class="content page" id="page-members">
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title"><span class="icon">👥</span> รายชื่อสมาชิก</div>
+        <div class="section-actions">
+          <button class="btn btn-primary btn-sm" onclick="openAddMember()">➕ เพิ่มสมาชิก</button>
+        </div>
+      </div>
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="search-input" id="member-search" placeholder="ค้นหาชื่อ หรือ ID สมาชิก..." oninput="filterMembers()">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>ชื่อ</th><th>เครดิต</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="member-table"><tr class="loading-row"><td colspan="5"><span class="spin">⟳</span> กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SLIPS ── -->
+  <div class="content page" id="page-slips">
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title"><span class="icon">🧾</span> ประวัติการเติมเครดิตจากสลิป</div>
+      </div>
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="search-input" id="slip-search" placeholder="ค้นหาชื่อสมาชิก หรือยอดโอน..." oninput="filterSlips()">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>สมาชิก</th><th>ยอดโอน</th><th>เครดิตที่ได้</th><th>เลข Ref</th><th>เวลา</th></tr></thead>
+          <tbody id="slip-table"><tr class="loading-row"><td colspan="5"><span class="spin">⟳</span></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PROFIT ── -->
+  <div class="content page" id="page-profit">
+    <div class="stats-grid" style="grid-template-columns: repeat(2,1fr)">
+      <div class="stat-card" style="--accent-color: var(--green)">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">กำไรสะสมทั้งหมด</div>
+        <div class="stat-value" id="p-total">-</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--blue)">
+        <div class="stat-icon">🎯</div>
+        <div class="stat-label">จำนวนรอบ</div>
+        <div class="stat-value" id="p-rounds">-</div>
+        <div class="stat-sub">รอบที่มีประวัติกำไร</div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title"><span class="icon">📜</span> ประวัติรอบ</div>
+      </div>
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="search-input" id="profit-search" placeholder="ค้นหาค่าย หรือรอบ..." oninput="filterProfit()">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ค่าย</th><th>ผล</th><th>กำไร</th><th>รอบ</th><th>เวลา</th></tr></thead>
+          <tbody id="profit-table"><tr class="loading-row"><td colspan="5"><span class="spin">⟳</span></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Modal: เพิ่ม/แก้ไขเครดิต -->
+<div class="overlay" id="modal-credit">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-credit-title">จัดการเครดิต</div>
+    <div class="modal-field">
+      <label>สมาชิก</label>
+      <input class="modal-input" id="mc-name" readonly>
+    </div>
+    <div class="modal-field">
+      <label>เครดิตปัจจุบัน</label>
+      <input class="modal-input" id="mc-current" readonly>
+    </div>
+    <div class="modal-field">
+      <label>จำนวน</label>
+      <input class="modal-input" id="mc-amount" type="number" min="1" placeholder="ใส่จำนวน...">
+    </div>
     <div class="modal-actions">
-      <button class="btn btn-cancel" onclick="closeModal()">ยกเลิก</button>
-      <button class="btn btn-confirm" id="modal-confirm" onclick="confirmCredit()">ยืนยัน</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-credit')">ยกเลิก</button>
+      <button class="btn btn-primary" id="mc-confirm" onclick="confirmCredit()">ยืนยัน</button>
     </div>
   </div>
 </div>
-<div class="toast" id="toast"></div>
+
+<!-- Modal: เพิ่มสมาชิก -->
+<div class="overlay" id="modal-add-member">
+  <div class="modal-box">
+    <div class="modal-title">➕ เพิ่มสมาชิก</div>
+    <div class="modal-field">
+      <label>LINE User ID</label>
+      <input class="modal-input" id="am-userid" placeholder="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+    </div>
+    <div class="modal-field">
+      <label>ชื่อ (ไม่บังคับ)</label>
+      <input class="modal-input" id="am-name" placeholder="ชื่อสมาชิก">
+    </div>
+    <div class="modal-field">
+      <label>เครดิตเริ่มต้น</label>
+      <input class="modal-input" id="am-credit" type="number" min="0" value="0">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modal-add-member')">ยกเลิก</button>
+      <button class="btn btn-primary" onclick="confirmAddMember()">เพิ่มสมาชิก</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-wrap" id="toast-wrap"></div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
-let allUsers = [];
-let modalUserId = '';
-let modalMode = '';
+let allMembers = [], allSlips = [], allProfit = [];
+let creditUserId = '', creditMode = '';
+const PAGES = { dashboard: 'ภาพรวม', members: 'สมาชิก', slips: 'ประวัติสลิป', profit: 'ยอดกำไร' };
 
-async function loadUsers() {
-  try {
-    const res = await fetch(`/admin/api/users?token=${TOKEN}`);
-    const data = await res.json();
-    allUsers = data.users || [];
-    renderStats(data);
-    renderTable(allUsers);
-  } catch(e) {
-    document.getElementById('user-table').innerHTML = '<tr><td colspan="4" class="loading">โหลดไม่สำเร็จ</td></tr>';
-  }
+/* ── Page switching ── */
+function switchPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'" + name + "'")) n.classList.add('active');
+  });
+  document.getElementById('page-title').textContent = PAGES[name];
 }
 
-function renderStats(data) {
-  document.getElementById('total-users').textContent = (data.total || 0).toLocaleString();
-  document.getElementById('total-credit').textContent = (data.total_credit || 0).toLocaleString();
-  document.getElementById('active-users').textContent = (data.active_users || 0).toLocaleString();
+/* ── Avatar color ── */
+const COLORS = ['#7c6bff','#22d37f','#4bb8ff','#f5a623','#ff5e7a','#a78bfa','#34d399'];
+function avatarColor(name) { let h = 0; for (let c of (name||'')) h = (h * 31 + c.charCodeAt(0)) % COLORS.length; return COLORS[h]; }
+function avatar(name) {
+  const c = avatarColor(name); const ch = (name||'?')[0].toUpperCase();
+  return `<div class="avatar" style="background:${c}22;color:${c}">${ch}</div>`;
 }
 
-function renderTable(users) {
-  const tbody = document.getElementById('user-table');
-  if (!users.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">ไม่พบสมาชิก</td></tr>'; return; }
-  tbody.innerHTML = users.map(u => `
-    <tr>
-      <td>#${u.member_no}</td>
-      <td>${u.name || u.user_id}</td>
-      <td class="credit${u.credit <= 0 ? ' zero' : ''}">${u.credit.toLocaleString()}</td>
-      <td>
-        <button class="btn btn-add" onclick="openModal('${u.user_id}','${(u.name||'').replace(/'/g,'')}',${'add'})">+ บวก</button>
-        <button class="btn btn-sub" onclick="openModal('${u.user_id}','${(u.name||'').replace(/'/g,'')}','sub')">- ลบ</button>
-      </td>
-    </tr>`).join('');
+/* ── API ── */
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: {'X-Admin-Token': TOKEN, 'Content-Type': 'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path + (path.includes('?') ? '&' : '?') + 'token=' + TOKEN, opts);
+  return r.json();
 }
 
-function filterUsers() {
-  const q = document.getElementById('search').value.toLowerCase();
-  renderTable(allUsers.filter(u => (u.name||'').toLowerCase().includes(q) || String(u.member_no).includes(q)));
+/* ── Load all data ── */
+async function loadDashboard() {
+  const [u, s, p] = await Promise.all([api('/admin/api/users'), api('/admin/api/slips'), api('/admin/api/profit')]);
+  allMembers = u.users || []; allSlips = s.slips || []; allProfit = p.rounds || [];
+
+  // Stats
+  document.getElementById('s-total').textContent = (u.total||0).toLocaleString();
+  document.getElementById('s-active').textContent = `มีเครดิต ${(u.active_users||0).toLocaleString()} คน`;
+  document.getElementById('s-credit').textContent = (u.total_credit||0).toLocaleString();
+  document.getElementById('s-slips').textContent = allSlips.length.toLocaleString();
+  const totalBaht = allSlips.reduce((a,x) => a + parseFloat(x.amount_baht||0), 0);
+  document.getElementById('s-slips-amount').textContent = `รวม ${totalBaht.toLocaleString('th', {minimumFractionDigits:0})} บาท`;
+  document.getElementById('s-profit').textContent = (p.total_profit||0).toLocaleString();
+  document.getElementById('s-profit-rounds').textContent = `${allProfit.length} รอบ`;
+  document.getElementById('nav-members-count').textContent = allMembers.length;
+
+  // Top members
+  const top = [...allMembers].sort((a,b) => b.credit - a.credit).slice(0, 8);
+  document.getElementById('top-table').innerHTML = top.length
+    ? top.map(u => `<tr>
+        <td><span class="member-no">#${u.member_no}</span></td>
+        <td><div class="name-cell">${avatar(u.name)}<span>${esc(u.name)}</span></div></td>
+        <td><span class="credit-val${u.credit<=0?' zero':''}">${u.credit.toLocaleString()}</span></td>
+        <td><div class="action-btns">
+          <button class="btn btn-green btn-sm" onclick="openCredit('${u.user_id}','${esc(u.name)}',${u.credit},'add')">+</button>
+          <button class="btn btn-red btn-sm" onclick="openCredit('${u.user_id}','${esc(u.name)}',${u.credit},'sub')">−</button>
+        </div></td></tr>`).join('')
+    : '<tr><td colspan="4" class="empty"><div class="empty-icon">👥</div>ยังไม่มีสมาชิก</td></tr>';
+
+  // Recent slips
+  const recent = [...allSlips].sort((a,b) => (b.created_at||'').localeCompare(a.created_at||'')).slice(0,8);
+  document.getElementById('recent-slips-table').innerHTML = recent.length
+    ? recent.map(s => `<tr>
+        <td><div class="name-cell">${avatar(s.line_name)}<span>${esc(s.line_name||'?')}</span></div></td>
+        <td><span class="amount-cell">${parseFloat(s.amount_baht||0).toLocaleString()} บ.</span></td>
+        <td><span class="credit-val">${(s.credit_added||0).toLocaleString()}</span></td>
+        <td><span style="color:var(--text3);font-size:12px">${(s.created_at||'').substring(0,16)}</span></td></tr>`).join('')
+    : '<tr><td colspan="4" class="empty"><div class="empty-icon">🧾</div>ยังไม่มีสลิป</td></tr>';
+
+  // Populate other tabs
+  renderMembers(allMembers);
+  renderSlips(allSlips);
+  renderProfit(allProfit, p.total_profit||0);
+
+  // Profit stats
+  document.getElementById('p-total').textContent = (p.total_profit||0).toLocaleString();
+  document.getElementById('p-rounds').textContent = allProfit.length.toLocaleString();
 }
 
-function openModal(userId, name, mode) {
-  modalUserId = userId; modalMode = mode;
-  document.getElementById('modal-title').textContent = mode === 'add' ? '💚 บวกเครดิต' : '❤️ ลบเครดิต';
-  document.getElementById('modal-name').value = name;
-  document.getElementById('modal-amount').value = '';
-  document.getElementById('modal-confirm').style.background = mode === 'add' ? '#22c55e' : '#ef4444';
-  document.getElementById('modal').classList.add('open');
-  setTimeout(() => document.getElementById('modal-amount').focus(), 100);
+/* ── Members ── */
+function renderMembers(list) {
+  document.getElementById('member-table').innerHTML = list.length
+    ? list.map(u => `<tr>
+        <td><span class="member-no">#${u.member_no}</span></td>
+        <td><div class="name-cell">${avatar(u.name)}<span>${esc(u.name)}</span></div></td>
+        <td><span class="credit-val${u.credit<=0?' zero':''}">${u.credit.toLocaleString()}</span></td>
+        <td><span class="badge ${u.credit>0?'badge-green':'badge-red'}">${u.credit>0?'มีเครดิต':'ไม่มีเครดิต'}</span></td>
+        <td><div class="action-btns">
+          <button class="btn btn-green btn-sm" onclick="openCredit('${u.user_id}','${esc(u.name)}',${u.credit},'add')">➕ บวก</button>
+          <button class="btn btn-red btn-sm" onclick="openCredit('${u.user_id}','${esc(u.name)}',${u.credit},'sub')">➖ ลบ</button>
+        </div></td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty"><div class="empty-icon">👥</div>ไม่พบสมาชิก</td></tr>';
+}
+function filterMembers() {
+  const q = document.getElementById('member-search').value.toLowerCase();
+  renderMembers(allMembers.filter(u => (u.name||'').toLowerCase().includes(q) || String(u.member_no).includes(q)));
 }
 
-function closeModal() { document.getElementById('modal').classList.remove('open'); }
+/* ── Slips ── */
+function renderSlips(list) {
+  const sorted = [...list].sort((a,b) => (b.created_at||'').localeCompare(a.created_at||''));
+  document.getElementById('slip-table').innerHTML = sorted.length
+    ? sorted.map(s => `<tr>
+        <td><div class="name-cell">${avatar(s.line_name)}<span>${esc(s.line_name||'?')} <span class="badge badge-purple">#${s.member_no||'-'}</span></span></div></td>
+        <td><span class="amount-cell">${parseFloat(s.amount_baht||0).toLocaleString()} บาท</span></td>
+        <td><span class="credit-val">${(s.credit_added||0).toLocaleString()}</span></td>
+        <td><span class="slip-ref" title="${esc(s.slip_ref||'')}">${(s.slip_ref||'-').substring(0,18)}…</span></td>
+        <td><span style="color:var(--text3);font-size:12px">${(s.created_at||'').substring(0,16)}</span></td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty"><div class="empty-icon">🧾</div>ยังไม่มีประวัติสลิป</td></tr>';
+}
+function filterSlips() {
+  const q = document.getElementById('slip-search').value.toLowerCase();
+  renderSlips(allSlips.filter(s => (s.line_name||'').toLowerCase().includes(q) || String(s.amount_baht||'').includes(q)));
+}
 
+/* ── Profit ── */
+function renderProfit(list, total) {
+  const sorted = [...list].sort((a,b) => (b.created_at||'').localeCompare(a.created_at||''));
+  document.getElementById('profit-table').innerHTML = sorted.length
+    ? sorted.map(r => `<tr>
+        <td><span class="profit-row-camp">${esc(r.camp_name||'-')}</span></td>
+        <td><span class="badge badge-blue">${r.result_value??'-'}</span></td>
+        <td><span class="credit-val">+${(r.profit_amount||0).toLocaleString()}</span></td>
+        <td><span style="color:var(--text3);font-size:12px">${(r.round_id||'-').substring(0,12)}</span></td>
+        <td><span style="color:var(--text3);font-size:12px">${(r.created_at||'').substring(0,16)}</span></td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty"><div class="empty-icon">💰</div>ยังไม่มีประวัติกำไร</td></tr>';
+}
+function filterProfit() {
+  const q = document.getElementById('profit-search').value.toLowerCase();
+  renderProfit(allProfit.filter(r => (r.camp_name||'').toLowerCase().includes(q) || String(r.round_id||'').includes(q)));
+}
+
+/* ── Credit modal ── */
+function openCredit(userId, name, current, mode) {
+  creditUserId = userId; creditMode = mode;
+  const isAdd = mode === 'add';
+  document.getElementById('modal-credit-title').textContent = isAdd ? '💚 บวกเครดิต' : '❤️ ลบเครดิต';
+  document.getElementById('mc-name').value = name;
+  document.getElementById('mc-current').value = current.toLocaleString() + ' เครดิต';
+  document.getElementById('mc-amount').value = '';
+  document.getElementById('mc-confirm').style.background = isAdd ? 'var(--green2)' : 'var(--red2)';
+  document.getElementById('mc-confirm').textContent = isAdd ? 'บวกเครดิต' : 'ลบเครดิต';
+  openModal('modal-credit');
+  setTimeout(() => document.getElementById('mc-amount').focus(), 150);
+}
 async function confirmCredit() {
-  const amount = parseInt(document.getElementById('modal-amount').value);
-  if (!amount || amount <= 0) { showToast('ใส่จำนวนให้ถูกต้อง', true); return; }
-  try {
-    const res = await fetch('/admin/api/credit', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json','X-Admin-Token': TOKEN},
-      body: JSON.stringify({user_id: modalUserId, amount, mode: modalMode})
-    });
-    const data = await res.json();
-    if (data.ok) {
-      closeModal();
-      showToast(`${modalMode === 'add' ? 'บวก' : 'ลบ'} ${amount.toLocaleString()} เครดิตสำเร็จ`);
-      loadUsers();
-    } else { showToast(data.error || 'เกิดข้อผิดพลาด', true); }
-  } catch(e) { showToast('เชื่อมต่อไม่ได้', true); }
+  const amount = parseInt(document.getElementById('mc-amount').value);
+  if (!amount || amount <= 0) { toast('ใส่จำนวนให้ถูกต้อง', 'error'); return; }
+  const r = await api('/admin/api/credit', 'POST', {user_id: creditUserId, amount, mode: creditMode});
+  if (r.ok) {
+    closeModal('modal-credit');
+    toast(`${creditMode==='add'?'บวก':'ลบ'} ${amount.toLocaleString()} เครดิตสำเร็จ ✓`);
+    await loadDashboard();
+  } else toast(r.error || 'เกิดข้อผิดพลาด', 'error');
 }
 
-function showToast(msg, isError=false) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.className = 'toast' + (isError ? ' error' : '');
-  t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', 3000);
+/* ── Add member modal ── */
+function openAddMember() { openModal('modal-add-member'); }
+async function confirmAddMember() {
+  const userId = document.getElementById('am-userid').value.trim();
+  const name = document.getElementById('am-name').value.trim();
+  const credit = parseInt(document.getElementById('am-credit').value||0);
+  if (!userId) { toast('ใส่ LINE User ID', 'error'); return; }
+  const r = await api('/admin/api/add_member', 'POST', {user_id: userId, name, credit});
+  if (r.ok) { closeModal('modal-add-member'); toast('เพิ่มสมาชิกสำเร็จ ✓'); await loadDashboard(); }
+  else toast(r.error || 'เกิดข้อผิดพลาด', 'error');
 }
 
-document.getElementById('modal').addEventListener('click', function(e) { if(e.target===this) closeModal(); });
-document.getElementById('modal-amount').addEventListener('keydown', e => { if(e.key==='Enter') confirmCredit(); });
+/* ── Modal helpers ── */
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); }));
 
-loadUsers();
+/* ── Toast ── */
+function toast(msg, type='success') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.innerHTML = (type==='success'?'✓':'✕') + ' ' + msg;
+  document.getElementById('toast-wrap').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+/* ── Refresh ── */
+async function refreshAll() { await loadDashboard(); toast('รีเฟรชข้อมูลแล้ว'); }
+
+/* ── Utils ── */
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+/* ── Keyboard ── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.overlay.open').forEach(o => o.classList.remove('open'));
+  if (e.key === 'Enter' && document.getElementById('modal-credit').classList.contains('open')) confirmCredit();
+});
+
+loadDashboard();
 </script>
 </body>
 </html>"""
-    return html
+
+@app.route("/admin", methods=["GET"])
+def admin_panel():
+    if not check_admin_token(request):
+        return "Unauthorized", 401
+    return ADMIN_HTML
 
 
 @app.route("/admin/api/users", methods=["GET"])
@@ -10809,10 +11446,7 @@ def admin_api_credit():
         if not user:
             return {"ok": False, "error": "ไม่พบสมาชิก"}, 404
         old = int(user.get("credit", 0) or 0)
-        if mode == "add":
-            user["credit"] = old + amount
-        else:
-            user["credit"] = max(0, old - amount)
+        user["credit"] = old + amount if mode == "add" else max(0, old - amount)
         try:
             save_user_db()
         except Exception as e:
@@ -10820,6 +11454,65 @@ def admin_api_credit():
     return {"ok": True, "new_credit": user["credit"]}
 
 
+@app.route("/admin/api/add_member", methods=["POST"])
+def admin_api_add_member():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    data = request.get_json() or {}
+    user_id = data.get("user_id", "").strip()
+    name = data.get("name", "").strip()
+    credit = int(data.get("credit", 0) or 0)
+    if not user_id:
+        return {"ok": False, "error": "ต้องระบุ LINE User ID"}, 400
+    with STATE_LOCK:
+        if user_id in USERS:
+            return {"ok": False, "error": "มีสมาชิก User ID นี้แล้ว"}, 400
+        member_no = max((u.get("member_no", 0) for u in USERS.values()), default=0) + 1
+        USERS[user_id] = {
+            "user_id": user_id,
+            "member_no": member_no,
+            "name": name or f"สมาชิก#{member_no}",
+            "line_name": name or f"สมาชิก#{member_no}",
+            "credit": max(0, credit),
+            "created_at": datetime.now().isoformat(),
+        }
+        try:
+            save_user_db()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}, 500
+    return {"ok": True, "member_no": member_no}
+
+
+@app.route("/admin/api/slips", methods=["GET"])
+def admin_api_slips():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    with STATE_LOCK:
+        slips_dict = SLIP_TOPUPS.get("slips", {})
+        slips_list = []
+        for ref, s in slips_dict.items():
+            slips_list.append({
+                "slip_ref": ref,
+                "member_no": s.get("member_no"),
+                "line_name": s.get("line_name") or s.get("name") or "-",
+                "amount_baht": s.get("amount_baht", "0"),
+                "credit_added": s.get("credit_added", 0),
+                "created_at": s.get("created_at", ""),
+            })
+    slips_list.sort(key=lambda x: x["created_at"], reverse=True)
+    total_baht = sum(float(s["amount_baht"] or 0) for s in slips_list)
+    return {"ok": True, "slips": slips_list, "total": len(slips_list), "total_baht": total_baht}
+
+
+@app.route("/admin/api/profit", methods=["GET"])
+def admin_api_profit():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    with STATE_LOCK:
+        rounds = list(PROFIT.get("rounds", []) or [])
+        total = int(PROFIT.get("total_profit", 0) or 0)
+    rounds.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"ok": True, "rounds": rounds, "total_profit": total}
 
 
 @app.route("/callback", methods=["POST"])
