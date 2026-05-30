@@ -5042,49 +5042,37 @@ def slip_status_flex(title, subtitle, status_text, color="#3B82F6", emoji="🔎"
 
 def bank_logo_url(short_code: str) -> str:
     """
-    คืน URL โลโก้ธนาคารจาก short code เช่น KBANK, SCB, BBL
-    ใช้ route /banks/<code>.png ที่โฮสต์บน Railway เอง
-    LINE Flex รองรับ URL จาก domain เดียวกับ webhook
+    คืน URL โลโก้ธนาคารจริงจาก casperstack/thai-banks-logo (GitHub raw)
+    ชื่อไฟล์เป็นตัวพิมพ์ใหญ่ เช่น KBANK.png, SCB.png
     """
-    short_to_key = {
-        "BBL":      "bbl",
-        "KBANK":    "kbank",
-        "KTB":      "ktb",
-        "TTB":      "ttb",
-        "SCB":      "scb",
-        "BAY":      "bay",
-        "GSB":      "gsb",
-        "GHB":      "ghb",
-        "BAAC":     "baac",
-        "UOB":      "uob",
-        "CIMBT":    "cimbt",
-        "TISCO":    "tisco",
-        "KKP":      "kkp",
-        "ICBCT":    "icbct",
-        "TCD":      "tcd",
-        "LH":       "lh",
-        "ISBT":     "isbt",
-        "MHCB":     "mhcb",
-        "SCBT":     "scbt",
-        "CITI":     "citi",
-        "BNPP":     "bnpp",
-        "BOC":      "boc",
-        "TRUEMONEY":"truemoney",
-        "TMW":      "truemoney",
+    # map จาก EasySlip short code → ชื่อไฟล์ใน repo
+    short_to_file = {
+        "KBANK":    "KBANK",
+        "SCB":      "SCB",
+        "BBL":      "BBL",
+        "KTB":      "KTB",
+        "TTB":      "TTB",
+        "BAY":      "BAY",
+        "GSB":      "GSB",
+        "GHB":      "GHB",
+        "BAAC":     "BAAC",
+        "UOB":      "UOB",
+        "CIMBT":    "CIMB",
+        "CITI":     "CITI",
+        "KKP":      "KKP",
+        "ICBCT":    "ICBC",
+        "LH":       "LHB",
+        "TISCO":    "TISCO",
+        "ISBT":     "IBANK",
+        "TCD":      "TCRB",
+        "TRUEMONEY":"TrueMoney",
+        "TMW":      "TrueMoney",
+        "PROMPTPAY":"PromptPay",
     }
-    key = short_to_key.get(str(short_code or "").upper().strip())
+    key = short_to_file.get(str(short_code or "").upper().strip())
     if not key:
         return ""
-    # ดึง base URL จาก env (Railway จะตั้งค่า RAILWAY_PUBLIC_DOMAIN อัตโนมัติ)
-    base = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-    if not base:
-        base = os.getenv("PUBLIC_URL", "").strip()
-    if not base:
-        return ""
-    base = base.rstrip("/")
-    if not base.startswith("http"):
-        base = "https://" + base
-    return f"{base}/banks/{key}.png"
+    return f"https://raw.githubusercontent.com/casperstack/thai-banks-logo/master/icons/{key}.png"
 
 
 def bank_logo_component(short_code: str, size: str = "28px") -> dict:
@@ -5145,120 +5133,128 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
     member_no   = str(target.get("member_no") or "-")
     new_credit  = int(target.get("credit", 0) or 0)
 
-    # ── ดึงข้อมูลผู้โอน / ผู้รับจาก EasySlip V2 ──────────────────────────────
-    sender_name      = ""
-    sender_short     = ""
-    receiver_name    = ""
-    receiver_short   = ""
-    trans_ref_short  = ""
+    sender_name    = ""
+    sender_short   = ""
+    receiver_name  = ""
+    receiver_short = ""
 
     if isinstance(slip_data, dict):
         try:
             raw = slip_data.get("data", {}).get("rawSlip") or {}
-
             s = raw.get("sender", {})
-            sender_name = (
-                s.get("account", {}).get("name", {}).get("th")
-                or s.get("account", {}).get("name", {}).get("en") or ""
-            )
+            sender_name  = s.get("account", {}).get("name", {}).get("th") or s.get("account", {}).get("name", {}).get("en") or ""
             sender_short = s.get("bank", {}).get("short") or ""
-
             r = raw.get("receiver", {})
-            receiver_name = (
-                r.get("account", {}).get("name", {}).get("th")
-                or r.get("account", {}).get("name", {}).get("en") or ""
-            )
+            receiver_name  = r.get("account", {}).get("name", {}).get("th") or r.get("account", {}).get("name", {}).get("en") or ""
             receiver_short = r.get("bank", {}).get("short") or ""
-
-            ref = raw.get("transRef") or ""
-            trans_ref_short = ref[:8] + "..." + ref[-6:] if len(ref) > 16 else ref
         except Exception:
             pass
 
-    # ── helpers ───────────────────────────────────────────────────────────────
-    def row(label, value, val_color="#111111"):
-        return {
-            "type": "box", "layout": "horizontal", "spacing": "sm", "margin": "sm",
+    def logo_img(short_code, size="36px"):
+        url = bank_logo_url(short_code)
+        if not url:
+            return None
+        return {"type": "image", "url": url, "size": size,
+                "aspectMode": "fit", "aspectRatio": "1:1", "flex": 0}
+
+    def party_box(name, short_code):
+        """กล่องแสดงโลโก้ + ชื่อ + ธนาคาร"""
+        logo = logo_img(short_code, "40px")
+        contents = []
+        if logo:
+            contents.append(logo)
+        contents.append({
+            "type": "box", "layout": "vertical", "spacing": "none",
             "contents": [
-                {"type": "text", "text": label, "size": "sm", "color": "#6B7280",
-                 "flex": 4, "wrap": True},
-                {"type": "text", "text": str(value) if value else "-",
-                 "size": "sm", "color": val_color, "flex": 6,
-                 "align": "end", "weight": "bold", "wrap": True},
-            ],
+                {"type": "text", "text": name or "-", "size": "xs",
+                 "color": "#111111", "weight": "bold", "wrap": True,
+                 "maxLines": 2},
+                {"type": "text", "text": short_code or "-", "size": "xxs",
+                 "color": "#9CA3AF"},
+            ]
+        })
+        return {
+            "type": "box", "layout": "horizontal",
+            "spacing": "sm", "alignItems": "center",
+            "flex": 5, "contents": contents,
         }
 
-    def section_label(text):
-        return {"type": "text", "text": text, "size": "xs",
-                "color": "#9CA3AF", "margin": "lg", "weight": "bold"}
+    def arrow_box():
+        return {
+            "type": "box", "layout": "vertical", "flex": 1,
+            "alignItems": "center", "justifyContent": "center",
+            "contents": [{"type": "text", "text": "→", "size": "sm",
+                          "color": "#9CA3AF", "align": "center"}]
+        }
 
-    def divider():
-        return {"type": "separator", "margin": "md", "color": "#F3F4F6"}
+    def kv(label, value, val_color="#111111"):
+        return {
+            "type": "box", "layout": "horizontal", "spacing": "sm",
+            "contents": [
+                {"type": "text", "text": label, "size": "xs",
+                 "color": "#9CA3AF", "flex": 4},
+                {"type": "text", "text": str(value) if value else "-",
+                 "size": "xs", "color": val_color, "flex": 6,
+                 "align": "end", "weight": "bold", "wrap": True},
+            ]
+        }
 
-    # ── body ──────────────────────────────────────────────────────────────────
-    body = []
-
-    # Hero: ยอดเครดิต
-    body.append({
-        "type": "box", "layout": "vertical", "alignItems": "center",
-        "paddingBottom": "12px",
-        "contents": [
-            {"type": "text", "text": "💰", "size": "3xl", "align": "center"},
-            {"type": "text", "text": f"+{credit_to_add:,} เครดิต",
-             "size": "xxl", "weight": "bold", "color": "#16A34A",
-             "align": "center", "margin": "sm"},
-            {"type": "text", "text": "ระบบเติมเครดิตให้อัตโนมัติแล้ว",
-             "size": "sm", "color": "#6B7280", "align": "center"},
-        ],
-    })
-
-    body.append(divider())
-
-    # ข้อมูลการโอน
-    body.append(section_label("📋  ข้อมูลการโอน"))
-    body.append(row("ยอดโอน", f"{format_topup_amount(amount)} บาท", "#16A34A"))
-    if sender_name:
-        body.append(bank_row("ผู้โอน", sender_name, sender_short))
-    if receiver_name:
-        body.append(bank_row("ผู้รับ", receiver_name, receiver_short))
-    if trans_ref_short:
-        body.append(row("เลขอ้างอิง", trans_ref_short, "#9CA3AF"))
-
-    body.append(divider())
-
-    # ข้อมูลสมาชิก
-    body.append(section_label("👤  ข้อมูลสมาชิก"))
-    body.append(row("ชื่อ", member_name))
-    body.append(row("ID", member_no))
-    body.append(row("เครดิตก่อน", f"{old_credit:,}"))
-    body.append(row("เครดิตคงเหลือ", f"{new_credit:,}", "#16A34A"))
-
-    # footer
-    body.extend([
-        {"type": "separator", "margin": "lg", "color": "#F3F4F6"},
-        {"type": "text",
-         "text": "เก็บประวัติสลิปแล้ว ระบบจะไม่เติมซ้ำจากสลิปเดิม",
-         "size": "xs", "color": "#9CA3AF", "align": "center", "margin": "md", "wrap": True},
-    ])
+    body = [
+        # ── แถวผู้โอน → ผู้รับ ──
+        {
+            "type": "box", "layout": "horizontal",
+            "spacing": "sm", "alignItems": "center",
+            "margin": "none",
+            "contents": [
+                party_box(sender_name, sender_short),
+                arrow_box(),
+                party_box(receiver_name, receiver_short),
+            ]
+        },
+        {"type": "separator", "margin": "md", "color": "#F3F4F6"},
+        # ── ข้อมูล ──
+        {
+            "type": "box", "layout": "vertical",
+            "spacing": "xs", "margin": "md",
+            "contents": [
+                kv("จำนวน", f"{format_topup_amount(amount)} บาท", "#16A34A"),
+                kv("เครดิตที่ได้", f"+{credit_to_add:,}", "#16A34A"),
+                kv("ชื่อ LINE", member_name),
+                kv("ID สมาชิก", f"#{member_no}"),
+                kv("เครดิตคงเหลือ", f"{new_credit:,}", "#16A34A"),
+            ]
+        },
+    ]
 
     return {
         "type": "bubble",
-        "size": "mega",
+        "size": "kilo",
         "header": {
             "type": "box", "layout": "horizontal",
-            "backgroundColor": "#16A34A", "paddingAll": "16px", "spacing": "sm",
+            "backgroundColor": "#16A34A",
+            "paddingAll": "12px", "spacing": "sm",
             "contents": [
-                {"type": "text", "text": "✅", "size": "lg", "flex": 0},
-                {"type": "text", "text": "ตรวจสลิปสำเร็จ",
-                 "weight": "bold", "size": "lg", "color": "#FFFFFF",
-                 "flex": 1, "wrap": True},
-            ],
+                {"type": "text", "text": "✅  ตรวจสลิปสำเร็จ",
+                 "weight": "bold", "size": "sm", "color": "#FFFFFF"},
+                {"type": "text", "text": f"+{credit_to_add:,} เครดิต",
+                 "size": "sm", "color": "#FFFFFF", "align": "end",
+                 "weight": "bold"},
+            ]
         },
         "body": {
             "type": "box", "layout": "vertical",
-            "paddingAll": "18px", "spacing": "none",
+            "paddingAll": "14px", "spacing": "none",
             "contents": body,
         },
+        "footer": {
+            "type": "box", "layout": "vertical",
+            "paddingAll": "10px", "backgroundColor": "#F9FAFB",
+            "contents": [{
+                "type": "text",
+                "text": "เก็บประวัติสลิปแล้ว ระบบจะไม่เติมซ้ำ",
+                "size": "xxs", "color": "#9CA3AF", "align": "center",
+            }]
+        }
     }
 
 
