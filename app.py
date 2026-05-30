@@ -6774,7 +6774,7 @@ def matched_flex_for_user(match, viewer_id):
                          "weight": "bold", "size": "sm", "color": "#111111"},
                         {
                             "type": "box", "layout": "horizontal",
-                            "spacing": "sm", "flexWrap": "wrap",
+                            "spacing": "sm",
                             "contents": [
                                 badge(f"แผล: {play_text}", "#EDE9FE", "#6D28D9"),
                                 badge(f"{price_label}: {price_text}", "#FEF3C7", "#B45309"),
