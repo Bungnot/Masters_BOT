@@ -4969,25 +4969,138 @@ def slip_status_flex(title, subtitle, status_text, color="#3B82F6", emoji="🔎"
     }
 
 
-def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref):
-    name = target.get("line_name") or target.get("name") or "User"
-    member_no = target.get("member_no", "-")
-    new_credit = int(target.get("credit", 0) or 0)
+def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_data=None):
+    member_name = target.get("line_name") or target.get("name") or "User"
+    member_no   = str(target.get("member_no") or "-")
+    new_credit  = int(target.get("credit", 0) or 0)
 
-    return slip_status_flex(
-        title="✅ ตรวจสลิปสำเร็จ",
-        subtitle="ระบบเติมเครดิตให้อัตโนมัติแล้ว",
-        status_text=f"+{credit_to_add:,} เครดิต",
-        color="#22C55E",
-        emoji="💰",
-        details=[
-            ("ชื่อ", name),
-            ("ID", member_no),
-            ("ยอดโอน", f"{format_topup_amount(amount)} บาท", "#16A34A"),
-            ("เครดิตคงเหลือ", f"{new_credit:,}", "#16A34A"),
+    # ── ดึงข้อมูลผู้โอน / ผู้รับจาก EasySlip V2 ──────────────────────────────
+    sender_name     = ""
+    sender_bank     = ""
+    receiver_name   = ""
+    receiver_bank   = ""
+    trans_ref_short = ""
+
+    if isinstance(slip_data, dict):
+        try:
+            raw = slip_data.get("data", {}).get("rawSlip") or {}
+
+            s = raw.get("sender", {})
+            sender_name = (
+                s.get("account", {}).get("name", {}).get("th")
+                or s.get("account", {}).get("name", {}).get("en")
+                or ""
+            )
+            sender_bank = s.get("bank", {}).get("short") or s.get("bank", {}).get("name") or ""
+
+            r = raw.get("receiver", {})
+            receiver_name = (
+                r.get("account", {}).get("name", {}).get("th")
+                or r.get("account", {}).get("name", {}).get("en")
+                or ""
+            )
+            receiver_bank = r.get("bank", {}).get("short") or r.get("bank", {}).get("name") or ""
+
+            ref = raw.get("transRef") or ""
+            trans_ref_short = ref[:8] + "..." + ref[-6:] if len(ref) > 16 else ref
+        except Exception:
+            pass
+
+    # ── helper ────────────────────────────────────────────────────────────────
+    def row(label, value, val_color="#111111", label_color="#6B7280"):
+        return {
+            "type": "box", "layout": "horizontal", "spacing": "sm",
+            "margin": "sm",
+            "contents": [
+                {"type": "text", "text": label, "size": "sm", "color": label_color,
+                 "flex": 4, "wrap": True},
+                {"type": "text", "text": str(value) if value else "-",
+                 "size": "sm", "color": val_color, "flex": 6,
+                 "align": "end", "weight": "bold", "wrap": True},
+            ],
+        }
+
+    def section_label(text):
+        return {"type": "text", "text": text, "size": "xs",
+                "color": "#9CA3AF", "margin": "lg", "weight": "bold"}
+
+    def divider():
+        return {"type": "separator", "margin": "md", "color": "#F3F4F6"}
+
+    # ── body contents ─────────────────────────────────────────────────────────
+    body = []
+
+    # ยอดเครดิตที่ได้ (hero)
+    body.append({
+        "type": "box", "layout": "vertical", "alignItems": "center",
+        "paddingBottom": "12px",
+        "contents": [
+            {"type": "text", "text": "💰", "size": "3xl", "align": "center"},
+            {"type": "text",
+             "text": f"+{credit_to_add:,} เครดิต",
+             "size": "xxl", "weight": "bold", "color": "#16A34A",
+             "align": "center", "margin": "sm"},
+            {"type": "text", "text": "ระบบเติมเครดิตให้อัตโนมัติแล้ว",
+             "size": "sm", "color": "#6B7280", "align": "center"},
         ],
-        footer_text="เก็บประวัติสลิปแล้ว ระบบจะไม่เติมซ้ำจากสลิปเดิม",
-    )
+    })
+
+    body.append(divider())
+
+    # ── ข้อมูลสลิป ───────────────────────────────────────────────────────────
+    body.append(section_label("📋  ข้อมูลการโอน"))
+    body.append(row("ยอดโอน", f"{format_topup_amount(amount)} บาท", "#16A34A"))
+    if sender_name:
+        body.append(row("ผู้โอน",
+                        f"{sender_name}{(' · ' + sender_bank) if sender_bank else ''}"))
+    if receiver_name:
+        body.append(row("ผู้รับ",
+                        f"{receiver_name}{(' · ' + receiver_bank) if receiver_bank else ''}"))
+    if trans_ref_short:
+        body.append(row("เลขอ้างอิง", trans_ref_short, "#9CA3AF"))
+
+    body.append(divider())
+
+    # ── ข้อมูลสมาชิก ─────────────────────────────────────────────────────────
+    body.append(section_label("👤  ข้อมูลสมาชิก"))
+    body.append(row("ชื่อ", member_name))
+    body.append(row("ID", member_no))
+    body.append(row("เครดิตก่อน", f"{old_credit:,}"))
+    body.append(row("เครดิตคงเหลือ", f"{new_credit:,}", "#16A34A"))
+
+    # footer
+    body.extend([
+        {"type": "separator", "margin": "lg", "color": "#F3F4F6"},
+        {"type": "text",
+         "text": "เก็บประวัติสลิปแล้ว ระบบจะไม่เติมซ้ำจากสลิปเดิม",
+         "size": "xs", "color": "#9CA3AF", "align": "center", "margin": "md", "wrap": True},
+    ])
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "horizontal",
+            "backgroundColor": "#16A34A",
+            "paddingAll": "16px",
+            "spacing": "sm",
+            "contents": [
+                {"type": "text", "text": "✅", "size": "lg", "flex": 0},
+                {"type": "text", "text": "ตรวจสลิปสำเร็จ",
+                 "weight": "bold", "size": "lg", "color": "#FFFFFF",
+                 "flex": 1, "wrap": True},
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "18px",
+            "spacing": "none",
+            "contents": body,
+        },
+    }
+
 
 
 def slip_fail_flex(title="❌ ตรวจสลิปไม่สำเร็จ", message="ระบบยังไม่เติมเครดิต", reason=None, suggestion=None):
@@ -5479,7 +5592,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
         save_user_db()
         save_slip_topup_db()
 
-    return slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref)
+    return slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_data=data)
 
 
 
