@@ -5664,51 +5664,39 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
         reason = f"ระบบยังไม่ยืนยันสลิป" + (f" ({error_code})" if error_code else "")
         return slip2go_reject_flex(data, "not_valid", reason)
 
-    # ── V2: ตรวจสลิปซ้ำจาก EasySlip ก่อน (isDuplicate) ────────────────────────
+    # ── V2: ตรวจสลิปซ้ำจาก EasySlip (isDuplicate) ──────────────────────────
     slip_ref, ref_path = easyslip_extract_reference(data, image_bytes)
 
-    if easyslip_is_duplicate(data):
-        # เช็คว่าบอทเคยเติมจริงหรือยัง
-        with STATE_LOCK:
-            old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
-        if old:
-            return slip_warning_flex(
-                title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
-                message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
-                slip_ref=slip_ref,
-                created_at=old.get("created_at", "-"),
-            )
-        # EasySlip บอกซ้ำ แต่บอทยังไม่เคยเติม
-        # หมายความว่าลูกค้าส่งสลิปซ้ำก่อนบอทจะเติมได้ (เช่น ครั้งแรก error ระหว่างทาง)
-        # ให้พยายามเติมให้เลย โดยข้ามการตรวจบัญชีซ้ำจาก EasySlip
-        # (EasySlip ไม่คืน rawSlip ครบในเคส duplicate บางครั้ง)
+    # ── ตรวจบัญชีผู้รับ ทุกกรณี (ทั้ง duplicate และไม่ duplicate) ────────────
+    # สำคัญ: ต้องตรวจก่อนเติมเสมอ กันสลิปโอนบัญชีอื่นถูกเติมเครดิต
+    if not easyslip_receiver_check_passed(data):
         if EASYSLIP_DEBUG_MODE:
-            print(f"EASYSLIP DUPLICATE but not in local DB: slip_ref={slip_ref}, proceeding to topup")
-        # ตกไปที่โค้ดเติมเครดิตด้านล่างโดยตรง (ไม่ return ที่นี่)
+            try:
+                raw = data.get("data", {}).get("rawSlip") or {}
+                r = raw.get("receiver", {})
+                acct = r.get("account", {})
+                print(f"EASYSLIP RECEIVER FAIL: bank={acct.get('bank')}, proxy={acct.get('proxy')}, name={acct.get('name')}, expected_no={EASYSLIP_ACCOUNT_NUMBER!r}, expected_name={EASYSLIP_ACCOUNT_NAME_TH!r}")
+            except Exception:
+                pass
+        return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
 
-    else:
-        # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ──────────────────────────────────────
-        with STATE_LOCK:
-            old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
-        if old:
-            return slip_warning_flex(
-                title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
-                message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
-                slip_ref=slip_ref,
-                created_at=old.get("created_at", "-"),
-            )
+    # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ───────────────────────────────────
+    with STATE_LOCK:
+        old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
+    if old:
+        return slip_warning_flex(
+            title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
+            message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
+            slip_ref=slip_ref,
+            created_at=old.get("created_at", "-"),
+        )
 
-        # ── ตรวจบัญชีผู้รับ (เฉพาะกรณีไม่ใช่ duplicate) ────────────────────────────
-        if not easyslip_receiver_check_passed(data):
-            if EASYSLIP_DEBUG_MODE:
-                try:
-                    raw = data.get("data", {}).get("rawSlip") or {}
-                    r = raw.get("receiver", {})
-                    acct = r.get("account", {})
-                    print(f"EASYSLIP RECEIVER FAIL: bank={acct.get('bank')}, proxy={acct.get('proxy')}, name={acct.get('name')}, expected={EASYSLIP_ACCOUNT_NUMBER}")
-                except Exception:
-                    pass
-            return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
+    # ── EasySlip บอก isDuplicate แต่บอทยังไม่เคยเติม ─────────────────────────
+    # (เช่น ส่งสลิปครั้งแรก error ก่อนเติม แล้วส่งซ้ำ)
+    # ผ่านการตรวจบัญชีแล้ว → เติมได้ปกติ
+    if easyslip_is_duplicate(data):
+        if EASYSLIP_DEBUG_MODE:
+            print(f"EASYSLIP DUPLICATE but not in local DB: slip_ref={slip_ref}, receiver passed, proceeding to topup")
 
     amount, amount_path = easyslip_extract_amount(data)
     if amount is None or amount < MIN_TOPUP_AMOUNT:
@@ -5725,6 +5713,9 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
             reason="ยอดเครดิตที่คำนวณได้ไม่ถูกต้อง",
             suggestion="ให้แอดมินตรวจ AUTO_TOPUP_RATE ใน .env",
         )
+
+    # ── Sync ชื่อ LINE ล่าสุด (background, ไม่บล็อก) ────────────────────────
+    queue_profile_refresh(user_id)
 
     with STATE_LOCK:
         slips = SLIP_TOPUPS.setdefault("slips", {})
@@ -9139,6 +9130,22 @@ def create_match_from_pending(post, taker_entry):
 
     # สำรองทันทีหลังสร้างคู่ติดสำเร็จ กันบอทค้างก่อนส่ง Flex / ก่อนตอบกลับ LINE
     save_round_backup_db(reason="match_created")
+
+    # Sync ชื่อ LINE ทั้งคู่พร้อมกัน รอไม่เกิน 2.5 วินาที
+    # ให้ชื่อใน Flex จับคู่เป็นชื่อล่าสุดเสมอ
+    _maker_id = match["maker_id"]
+    _taker_id = match["taker_id"]
+
+    def _sync_profile(uid):
+        try:
+            update_user_profile_from_line(uid)
+        except Exception:
+            pass
+
+    from concurrent.futures import wait as _wait, FIRST_EXCEPTION as _FE
+    _f1 = EXECUTOR.submit(_sync_profile, _maker_id)
+    _f2 = EXECUTOR.submit(_sync_profile, _taker_id)
+    _wait([_f1, _f2], timeout=1.5)
 
     # ส่ง Flex หาทั้งคู่แบบ async เพื่อลดอาการหน่วง
     # หลังบ้านไม่รับแจ้งเตือนอัตโนมัติ ใช้คำสั่ง CALL / ยอดกำไร เท่านั้น
