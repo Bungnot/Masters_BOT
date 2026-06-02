@@ -2541,7 +2541,7 @@ def bank_account_text() -> str:
 
 def bank_account_backoffice_flex():
     """Flex สีเขียวสวยงาม แจ้งลูกค้าว่าบัญชีอยู่ในแชทส่วนตัว พร้อมปุ่มติดตามแอดมิน"""
-    admin_url = os.getenv("BANK_ADMIN_LINE_URL", "https://page.line.me/730vddej").strip() or "https://page.line.me/730vddej"
+    admin_url = os.getenv("BANK_ADMIN_LINE_URL", "https://page.line.me/901qfixd").strip() or "https://page.line.me/901qfixd"
     return {
         "type": "bubble",
         "size": "mega",
@@ -2957,7 +2957,7 @@ def is_rules_request(text: str) -> bool:
     return clean in {"กต", "กติกา"}
 
 
-RULES_IMAGE_URL = "https://img1.pic.in.th/images/989c9cb6-bed1-4532-a19e-bbb9a03bcaca.jpg"
+RULES_IMAGE_URL = "https://img2.pic.in.th/b6b4bb4c-aaef-4391-b1e7-a1cea2ffd5fa.png"
 
 
 def rules_flex() -> dict:
