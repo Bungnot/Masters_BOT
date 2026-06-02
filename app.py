@@ -11966,10 +11966,11 @@ h1{{font-size:20px;font-weight:700;margin-bottom:4px}}
     var url = document.getElementById("newUrl").value.trim();
     if(!url){{ showResult("❌ กรุณาใส่ URL ก่อน", "err"); return; }}
     showResult("⏳ กำลังตั้งค่า...", "inf");
-    fetch("/admin/webhook/set?token=" + encodeURIComponent(tok), {{
+    var payload = JSON.stringify({{url: url}});
+    fetch("/admin/webhook/set?token=" + encodeURIComponent(tok) + "&url=" + encodeURIComponent(url), {{
         method:"POST",
         headers:{{"Content-Type":"application/json"}},
-        body: JSON.stringify({{url: url}})
+        body: payload
       }})
       .then(function(r){{ return r.json(); }})
       .then(function(d){{
@@ -12022,14 +12023,16 @@ def admin_webhook_set():
     if not check_admin_token(request):
         return {"error": "Unauthorized"}, 401
     try:
-        # รับ URL จาก query param หรือ JSON body
-        custom_url = request.args.get("url", "").strip()
+        # รับ URL จากทุกช่องทาง: query param, JSON body, form data
+        custom_url = (request.args.get("url") or "").strip()
         if not custom_url:
             try:
-                body = request.get_json(silent=True) or {}
-                custom_url = body.get("url", "").strip()
+                body = request.get_json(force=True, silent=True) or {}
+                custom_url = (body.get("url") or body.get("webhook_url") or "").strip()
             except Exception:
                 pass
+        if not custom_url:
+            custom_url = (request.form.get("url") or "").strip()
         if custom_url:
             webhook_url = custom_url
         else:
