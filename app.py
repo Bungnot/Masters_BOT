@@ -7130,22 +7130,91 @@ def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
         return "ไม่สามารถติดแผลของตัวเองได้"
 
     taker = ensure_user_from_event(event)
-    amount = bet["amount"]
+    post_amount = bet["amount"]
 
-    # ถ้าระบุยอด ต้องตรงกับยอดโพสต์
-    if requested_amount is not None and requested_amount != amount:
-        return f"ยอดโพสต์คือ {amount:,} ไม่สามารถติดบางส่วนได้"
+    # ถ้าระบุยอด ใช้ยอดที่ระบุ ถ้าไม่ระบุ ใช้ยอดโพสต์เต็ม (หรือเท่าที่ taker มี)
+    taker_credit = user_credit_amount(taker)
+    if requested_amount is not None:
+        take_amount = int(requested_amount)
+        if take_amount <= 0:
+            return "ยอดติดต้องมากกว่า 0"
+        if take_amount > post_amount:
+            return f"ยอดโพสต์คือ {post_amount:,} ไม่สามารถติดเกินยอดโพสต์ได้"
+    else:
+        # ไม่ระบุยอด → ใช้ยอดโพสต์เต็ม แต่ถ้าเครดิตไม่พอให้แจ้งและรับยอดที่มี
+        take_amount = min(post_amount, taker_credit)
 
-    if user_credit_amount(taker) < amount:
-        return insufficient_credit_warning(taker, amount, play_text=f"ติดคี่/คู่{amount:,}", action="เดิมพันคี่/คู่")
+    if taker_credit <= 0:
+        return insufficient_credit_warning(taker, post_amount, play_text=f"ติดคี่/คู่{post_amount:,}", action="เดิมพันคี่/คู่")
 
-    # บันทึก taker_id + message_id ของข้อความ ติด ไว้รอ maker ยืนยัน
-    current_msg_id = get_message_id(event)
+    if taker_credit < take_amount:
+        return insufficient_credit_warning(taker, take_amount, play_text=f"ติดคี่/คู่{take_amount:,}", action="เดิมพันคี่/คู่")
+
+    # ──────────────────────────────────────────────
+    # Partial match: take_amount < post_amount
+    # → สร้าง bet ใหม่สำหรับยอดที่เหลือ เปิดรับต่อ
+    # ──────────────────────────────────────────────
+    maker_id = bet["maker_id"]
+    maker = USERS.get(maker_id) or {}
+    maker_choice = bet["maker_choice"]
+    taker_choice = "คู่" if maker_choice == "คี่" else "คี่"
+    remaining = post_amount - take_amount
+
+    # หักเครดิต taker ทันที
+    taker["credit"] -= take_amount
+
+    # ปิด bet เดิมแล้วตั้งค่า matched
     bet["taker_id"] = taker_id
-    bet["taker_reply_message_id"] = current_msg_id
-    bet["status"] = "pending_taker"
+    bet["taker_choice"] = taker_choice
+    bet["amount"] = take_amount          # ปรับยอดจริงที่จับคู่ได้
+    bet["status"] = "matched"
+    bet["matched_at"] = now_text()
+    bet["order_no"] = get_next_order_no()
 
-    # เงียบในกลุ่ม รอ A ยืนยัน
+    # ถ้ายังมียอดเหลือ → สร้าง bet ใหม่เปิดรับต่อ (คืนเครดิตส่วนเกินให้ maker)
+    if remaining > 0:
+        maker["credit"] += remaining      # คืนเครดิตส่วนเกินให้ maker ก่อน
+        new_bet_id = f"{quoted_message_id}_r{remaining}"
+        ODD_EVEN_BETS[new_bet_id] = {
+            "bet_id": new_bet_id,
+            "parent_bet_id": quoted_message_id,
+            "round_id": bet["round_id"],
+            "chat_id": bet.get("chat_id"),
+            "camp_name": bet.get("camp_name"),
+            "maker_id": maker_id,
+            "taker_id": None,
+            "amount": remaining,
+            "maker_choice": maker_choice,
+            "status": "open",
+            "result_value": None,
+            "winning_choice": None,
+            "winner_id": None,
+            "created_at": now_text(),
+            "matched_at": None,
+            "settled_at": None,
+        }
+        # หัก remaining จากเครดิต maker อีกครั้ง (lock ยอดที่เหลือ)
+        maker["credit"] -= remaining
+
+    save_user_db()
+    save_round_backup_db(reason="odd_even_matched_partial" if remaining > 0 else "odd_even_matched")
+
+    # ส่ง Flex จับคู่สำเร็จ
+    push_flex_async(
+        maker_id,
+        "จับคู่สำเร็จ (คี่/คู่)",
+        oe_matched_flex(bet, maker_id)
+    )
+    push_flex_async(
+        taker_id,
+        "จับคู่สำเร็จ (คี่/คู่)",
+        oe_matched_flex(bet, taker_id)
+    )
+
+    # เงียบในกลุ่ม (ถ้ามียอดเหลือแสดง hint)
+    if remaining > 0:
+        remaining_new_bet_id = f"{quoted_message_id}_r{remaining}"
+        _ = remaining_new_bet_id  # ระบบเปิดรับยอดที่เหลืออัตโนมัติ ไม่ต้องแจ้งในกลุ่ม
     return None
 
 
