@@ -2639,7 +2639,7 @@ def bank_account_backoffice_flex():
                     "height": "md",
                     "action": {
                         "type": "uri",
-                        "label": "ติดตามแอดมิน",
+                        "label": "กดขอบัญชีที่นี่!",
                         "uri": admin_url,
                     },
                 }
