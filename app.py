@@ -11901,104 +11901,94 @@ def admin_api_profit():
 @app.route("/admin/webhook", methods=["GET"])
 def admin_webhook_page():
     if not check_admin_token(request):
-        return """<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
-        <h2>🔒 Unauthorized</h2><p>ต้องใส่ token ที่ถูกต้อง</p>
-        <p><a href="/admin/webhook?token=YOUR_TOKEN">ใส่ token ใน URL</a></p>
-        </body></html>""", 401
-
+        return "<h2>Unauthorized</h2>", 401
     public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-    webhook_url = f"{public_url}/callback"
-    token_param = request.args.get("token", "")
-
-    # encode token ใน data-attribute แทนการฝังใน JS ตรงๆ กัน SyntaxError
-    import json as _json
-    token_json = _json.dumps(token_param)
-    webhook_url_json = _json.dumps(webhook_url)
-
-    html = f"""<!DOCTYPE html>
+    webhook_url = public_url + "/callback"
+    return f"""<!DOCTYPE html>
 <html lang="th">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🔗 Webhook Manager</title>
-  <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }}
-    .card {{ background: #1e293b; border-radius: 16px; padding: 32px; max-width: 520px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }}
-    h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 6px; color: #f1f5f9; }}
-    .subtitle {{ font-size: 13px; color: #94a3b8; margin-bottom: 28px; }}
-    .url-box {{ background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 14px 16px; font-size: 13px; color: #38bdf8; word-break: break-all; margin-bottom: 24px; }}
-    .btn {{ width: 100%; padding: 14px; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; }}
-    .btn-verify {{ background: #16a34a; color: white; margin-bottom: 12px; }}
-    .btn-verify:hover {{ background: #15803d; }}
-    .btn-set {{ background: #2563eb; color: white; }}
-    .btn-set:hover {{ background: #1d4ed8; }}
-    .btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
-    .result {{ margin-top: 20px; padding: 16px; border-radius: 10px; font-size: 14px; white-space: pre-wrap; display: none; }}
-    .result.success {{ background: #14532d; border: 1px solid #16a34a; color: #86efac; }}
-    .result.error {{ background: #4c0519; border: 1px solid #dc2626; color: #fca5a5; }}
-    .result.info {{ background: #1e3a5f; border: 1px solid #2563eb; color: #93c5fd; }}
-    .label {{ font-size: 12px; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Webhook Manager</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}}
+.card{{background:#1e293b;border-radius:16px;padding:32px;max-width:500px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4)}}
+h1{{font-size:20px;font-weight:700;margin-bottom:4px}}
+.sub{{font-size:13px;color:#94a3b8;margin-bottom:24px}}
+.urlbox{{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;font-size:13px;color:#38bdf8;word-break:break-all;margin-bottom:20px}}
+.lbl{{font-size:11px;color:#64748b;margin-bottom:6px;text-transform:uppercase}}
+.inp{{width:100%;padding:10px 12px;background:#0f172a;border:1px solid #475569;border-radius:8px;color:#e2e8f0;font-size:14px;margin-bottom:16px}}
+.btn{{width:100%;padding:13px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px}}
+.g{{background:#16a34a;color:#fff}}.g:hover{{background:#15803d}}
+.b{{background:#2563eb;color:#fff}}.b:hover{{background:#1d4ed8}}
+.result{{margin-top:16px;padding:14px;border-radius:8px;font-size:13px;white-space:pre-wrap;display:none}}
+.ok{{background:#14532d;border:1px solid #16a34a;color:#86efac}}
+.err{{background:#4c0519;border:1px solid #dc2626;color:#fca5a5}}
+.inf{{background:#1e3a5f;border:1px solid #2563eb;color:#93c5fd}}
+</style>
 </head>
 <body>
-  <div class="card">
-    <h1>🔗 LINE Webhook Manager</h1>
-    <p class="subtitle">จัดการ Webhook URL สำหรับ LINE OA</p>
+<div class="card">
+  <h1>🔗 LINE Webhook Manager</h1>
+  <p class="sub">จัดการ Webhook URL สำหรับ LINE OA</p>
+  <div class="lbl">Webhook URL ปัจจุบัน</div>
+  <div class="urlbox" id="currentUrl">{webhook_url}</div>
+  <button class="btn g" id="btnVerify">✅ ทดสอบ / ยืนยัน Webhook</button>
+  <hr style="border:none;border-top:1px solid #334155;margin:8px 0 16px">
+  <div class="lbl">ตั้งค่า Webhook URL ใหม่</div>
+  <input class="inp" id="newUrl" type="text" value="{webhook_url}" placeholder="https://your-domain.app/callback">
+  <button class="btn b" id="btnSet">🔗 ตั้งค่า Webhook URL</button>
+  <div class="result" id="result"></div>
+</div>
+<script>
+(function(){{
+  var token = document.currentScript ? "" : "";
+  // อ่าน token จาก URL
+  var params = new URLSearchParams(window.location.search);
+  var tok = params.get("token") || "";
 
-    <div class="label">Webhook URL ปัจจุบัน</div>
-    <div class="url-box">{webhook_url}</div>
-
-    <button class="btn btn-verify" onclick="verifyWebhook()">✅ ทดสอบ / ยืนยัน Webhook</button>
-    <button class="btn btn-set" onclick="setWebhook()" style="margin-top:12px">🔗 ตั้งค่า Webhook URL ใหม่</button>
-
-    <div class="result" id="result"></div>
-  </div>
-
-  <script>
-    const TOKEN = {token_json};
-    const WEBHOOK_URL = {webhook_url_json};
-
-    async function verifyWebhook() {{
-      showResult("⏳ กำลังทดสอบ...", "info");
-      try {{
-        const res = await fetch("/admin/webhook/verify?token=" + encodeURIComponent(TOKEN), {{ method: "POST" }});
-        const data = await res.json();
-        if (data.success) {{
-          showResult("✅ Webhook ทำงานปกติ!\n\nstatus: " + data.statusCode + "\ntime: " + data.timestamp, "success");
+  document.getElementById("btnVerify").addEventListener("click", function(){{
+    showResult("⏳ กำลังทดสอบ...", "inf");
+    fetch("/admin/webhook/verify?token=" + encodeURIComponent(tok), {{method:"POST"}})
+      .then(function(r){{ return r.json(); }})
+      .then(function(d){{
+        if(d.success){{
+          showResult("✅ Webhook ทำงานปกติ!\\nstatus: " + d.statusCode + "\\ntime: " + d.timestamp, "ok");
         }} else {{
-          showResult("❌ ทดสอบไม่ผ่าน\n\n" + JSON.stringify(data, null, 2), "error");
+          showResult("❌ ทดสอบไม่ผ่าน\\n" + JSON.stringify(d, null, 2), "err");
         }}
-      }} catch(e) {{
-        showResult("❌ เกิดข้อผิดพลาด: " + e.message, "error");
-      }}
-    }}
+      }})
+      .catch(function(e){{ showResult("❌ Error: " + e.message, "err"); }});
+  }});
 
-    async function setWebhook() {{
-      showResult("⏳ กำลังตั้งค่า Webhook URL...", "info");
-      try {{
-        const res = await fetch("/admin/webhook/set?token=" + encodeURIComponent(TOKEN), {{ method: "POST" }});
-        const data = await res.json();
-        if (data.ok) {{
-          showResult("✅ ตั้งค่า Webhook URL สำเร็จ!\n\nURL: " + WEBHOOK_URL, "success");
+  document.getElementById("btnSet").addEventListener("click", function(){{
+    var url = document.getElementById("newUrl").value.trim();
+    if(!url){{ showResult("❌ กรุณาใส่ URL ก่อน", "err"); return; }}
+    showResult("⏳ กำลังตั้งค่า...", "inf");
+    fetch("/admin/webhook/set?token=" + encodeURIComponent(tok) + "&url=" + encodeURIComponent(url), {{method:"POST"}})
+      .then(function(r){{ return r.json(); }})
+      .then(function(d){{
+        if(d.ok){{
+          showResult("✅ ตั้งค่าสำเร็จ!\\nURL: " + url, "ok");
+          document.getElementById("currentUrl").textContent = url;
         }} else {{
-          showResult("❌ ตั้งค่าไม่สำเร็จ\n\n" + JSON.stringify(data, null, 2), "error");
+          showResult("❌ ตั้งค่าไม่สำเร็จ\\n" + JSON.stringify(d, null, 2), "err");
         }}
-      }} catch(e) {{
-        showResult("❌ เกิดข้อผิดพลาด: " + e.message, "error");
-      }}
-    }}
+      }})
+      .catch(function(e){{ showResult("❌ Error: " + e.message, "err"); }});
+  }});
 
-    function showResult(msg, type) {{
-      const el = document.getElementById("result");
-      el.style.display = "block";
-      el.className = "result " + type;
-      el.innerText = msg;
-    }}
-  </script>
+  function showResult(msg, cls){{
+    var el = document.getElementById("result");
+    el.style.display = "block";
+    el.className = "result " + cls;
+    el.textContent = msg;
+  }}
+}})();
+</script>
 </body>
-</html>"""
-    return html
+</html>""", 200
 
 
 @app.route("/admin/webhook/verify", methods=["POST"])
@@ -12028,8 +12018,13 @@ def admin_webhook_set():
     if not check_admin_token(request):
         return {"error": "Unauthorized"}, 401
     try:
-        public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-        webhook_url = f"{public_url}/callback"
+        # รับ URL จาก query param ถ้ามี ไม่งั้นใช้ default
+        custom_url = request.args.get("url", "").strip()
+        if custom_url:
+            webhook_url = custom_url
+        else:
+            public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+            webhook_url = f"{public_url}/callback"
         resp = requests.put(
             "https://api.line.me/v2/bot/channel/webhook/endpoint",
             headers={
