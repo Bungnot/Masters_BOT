@@ -10073,8 +10073,29 @@ def create_match_from_pending(post, taker_entry):
     save_round_backup_db(reason="match_created")
 
     # ส่ง Flex หาทั้งคู่แบบ async ทันที ไม่ sync profile ก่อน
-    push_flex_async(match["maker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["maker_id"]))
-    push_flex_async(match["taker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["taker_id"]))
+    # ถ้ามีแผลซ้อน ให้ส่ง 2 FLEX แยกกัน
+    if match.get("linked_offers"):
+        # ส่ง FLEX แผลแรก
+        push_flex_async(match["maker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["maker_id"]))
+        push_flex_async(match["taker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["taker_id"]))
+        
+        # ส่ง FLEX แผลที่เหลือ (linked_offers)
+        for i, linked_offer in enumerate(match.get("linked_offers", [])):
+            # สร้าง match object ชั่วคราวสำหรับแผลที่เหลือ
+            linked_match = dict(match)
+            linked_match["plus"] = linked_offer["plus"]
+            linked_match["amount"] = linked_offer["amount"]
+            linked_match["remaining_amount"] = linked_offer["amount"]
+            linked_match["maker_side"] = linked_offer["maker_side"]
+            linked_match["raw_alias"] = linked_offer["raw_alias"]
+            linked_match["linked_offers"] = []  # ไม่ส่อ linked_offers ต่อ
+            
+            push_flex_async(match["maker_id"], f"จับคู่สำเร็จ (แผล {i+2})", matched_flex_for_user(linked_match, match["maker_id"]))
+            push_flex_async(match["taker_id"], f"จับคู่สำเร็จ (แผล {i+2})", matched_flex_for_user(linked_match, match["taker_id"]))
+    else:
+        # ส่ง FLEX แผลเดี่ยว
+        push_flex_async(match["maker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["maker_id"]))
+        push_flex_async(match["taker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["taker_id"]))
 
     # เงียบในกลุ่มเมื่อแผลสมบูรณ์
     return None
@@ -12201,6 +12222,84 @@ def synchronized_state(func):
     return wrapper
 
 # ฟังก์ชันที่แก้ STATE / เครดิต / รายการ ต้องเข้าคิวทีละคำสั่ง
+def create_post_multi(event, offers_list):
+    """
+    สร้าง 1 โพสต์ที่มีหลายแผลซ้อน เช่น ชถ500 +5ถ300
+    
+    สำเร็จ = return None เพื่อให้บอทเงียบ
+    error = return text เพื่อแจ้งปัญหา
+    """
+    user_id = event.source.user_id
+    user = ensure_user_from_event(event)
+
+    if not is_front_chat(event):
+        return None
+
+    if not is_current_round_chat(event):
+        return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
+
+    if not STATE["opened"]:
+        return "ยังไม่เปิดรอบ จึงไม่รับโพสต์"
+
+    if STATE.get("settled"):
+        return "รอบนี้แจ้งผลแล้ว ไม่รับโพสต์เพิ่ม"
+
+    # คำนวณยอดรวมทั้งหมด
+    total_amount = sum(offer["amount"] for offer in offers_list)
+    
+    if user_credit_amount(user) < total_amount:
+        play_text = " + ".join(format_offer_play_text(offer) for offer in offers_list)
+        return insufficient_credit_warning(
+            user,
+            total_amount,
+            play_text=play_text,
+            is_chty=any(offer.get("only_when_no_price") for offer in offers_list),
+        )
+
+    post_id = get_message_id(event)
+    if not post_id:
+        return "ระบบไม่พบ message id ของโพสต์นี้"
+
+    # สร้าง post ด้วยแผลแรก และเก็บแผลที่เหลือใน linked_offers
+    main_offer = offers_list[0]
+    linked_offers = offers_list[1:] if len(offers_list) > 1 else []
+    
+    POSTS[post_id] = {
+        "post_id": post_id,
+        "round_id": STATE["round_id"],
+        "base_no": STATE.get("base_no"),
+        "camp_name": STATE.get("camp_name"),
+        "chat_id": STATE.get("chat_id"),
+        "maker_id": user_id,
+        "plus": main_offer["plus"],
+        "amount": main_offer["amount"],
+        "remaining_amount": main_offer["amount"],
+        "maker_side": main_offer["maker_side"],
+        "raw_alias": main_offer["raw_alias"],
+        "price_adjust_target": main_offer.get("price_adjust_target"),
+        "price_adjust_min": main_offer.get("price_adjust_min"),
+        "price_adjust_max": main_offer.get("price_adjust_max"),
+        "custom_price_min": main_offer.get("custom_price_min"),
+        "custom_price_max": main_offer.get("custom_price_max"),
+        "is_two_digit_price": main_offer.get("is_two_digit_price", False),
+        "two_digit_min_token": main_offer.get("two_digit_min_token"),
+        "two_digit_max_token": main_offer.get("two_digit_max_token"),
+        "is_custom_price": main_offer.get("is_custom_price", False),
+        "only_when_no_price": main_offer.get("only_when_no_price", False),
+        "linked_offers": linked_offers,  # ← เก็บแผลที่เหลือ
+        "total_amount": total_amount,  # ← ยอดรวมทั้งหมด
+        "takers": [],
+        "status": "open",
+        "created_at": now_text(),
+    }
+
+    # สำรองทันทีหลังรับโพสต์แผลสำเร็จ
+    save_round_backup_db(reason="post_multi_created")
+
+    # เงียบเมื่อรับโพสต์สำเร็จ
+    return None
+
+
 create_post = synchronized_state(create_post)
 handle_confirm = synchronized_state(handle_confirm)
 create_match_from_pending = synchronized_state(create_match_from_pending)
@@ -14281,13 +14380,11 @@ def handle_message(event):
     # ลองตรวจสอบแบบซ้อนหลายแผลก่อน
     offers_multi = parse_offer_multi(text)
     if offers_multi and len(offers_multi) > 1:
-        # ซ้อนหลายแผล - สร้างแต่ละแผลแยกกัน
+        # ซ้อนหลายแผล - สร้าง 1 โพสต์ที่มีหลายแผล
         with STATE_LOCK:
-            for offer in offers_multi:
-                msg = create_post(event, offer)
-                if msg:
-                    reply_problem(event, msg)
-                    return
+            msg = create_post_multi(event, offers_multi)
+            if msg:
+                reply_problem(event, msg)
         return
     
     # ลองตรวจสอบแบบเดี่ยว
