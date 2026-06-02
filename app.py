@@ -2615,7 +2615,7 @@ def bank_account_backoffice_flex():
                         },
                         {
                             "type": "text",
-                            "text": "เพื่อความปลอดภัย ไม่แสดงเลขบัญชีในกลุ่ม",
+                            "text": "รบกวนเช็คเลขบัญชีและชื่อก่อนโอนทุกครั้ง",
                             "size": "sm",
                             "color": "#6B7280",
                             "wrap": True,
@@ -2640,7 +2640,7 @@ def bank_account_backoffice_flex():
                     "height": "md",
                     "action": {
                         "type": "uri",
-                        "label": "ติดตามแอดมิน",
+                        "label": "ขอเลขบัญชีกดที่ปุ่มนี้เลย!",
                         "uri": admin_url,
                     },
                 }
