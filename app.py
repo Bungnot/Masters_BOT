@@ -12009,7 +12009,7 @@ def admin_webhook_verify():
                 "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
                 "Content-Type": "application/json",
             },
-            json={"webhook_endpoint": webhook_url},
+            json={"webhookEndpoint": webhook_url},
             timeout=(5, 10),
         )
         data = resp.json()
@@ -12039,6 +12039,8 @@ def admin_webhook_set():
             public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
             webhook_url = f"{public_url}/callback"
 
+        print(f"WEBHOOK SET: custom_url={custom_url!r} webhook_url={webhook_url!r}")
+
         if not webhook_url:
             return {"ok": False, "error": "ไม่พบ webhook URL"}, 400
 
@@ -12048,7 +12050,7 @@ def admin_webhook_set():
                 "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
                 "Content-Type": "application/json",
             },
-            json={"webhook_endpoint": webhook_url},
+            json={"webhookEndpoint": webhook_url},
             timeout=(5, 10),
         )
         if resp.status_code == 200:
