@@ -11966,7 +11966,11 @@ h1{{font-size:20px;font-weight:700;margin-bottom:4px}}
     var url = document.getElementById("newUrl").value.trim();
     if(!url){{ showResult("❌ กรุณาใส่ URL ก่อน", "err"); return; }}
     showResult("⏳ กำลังตั้งค่า...", "inf");
-    fetch("/admin/webhook/set?token=" + encodeURIComponent(tok) + "&url=" + encodeURIComponent(url), {{method:"POST"}})
+    fetch("/admin/webhook/set?token=" + encodeURIComponent(tok), {{
+        method:"POST",
+        headers:{{"Content-Type":"application/json"}},
+        body: JSON.stringify({{url: url}})
+      }})
       .then(function(r){{ return r.json(); }})
       .then(function(d){{
         if(d.ok){{
@@ -12018,13 +12022,23 @@ def admin_webhook_set():
     if not check_admin_token(request):
         return {"error": "Unauthorized"}, 401
     try:
-        # รับ URL จาก query param ถ้ามี ไม่งั้นใช้ default
+        # รับ URL จาก query param หรือ JSON body
         custom_url = request.args.get("url", "").strip()
+        if not custom_url:
+            try:
+                body = request.get_json(silent=True) or {}
+                custom_url = body.get("url", "").strip()
+            except Exception:
+                pass
         if custom_url:
             webhook_url = custom_url
         else:
             public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
             webhook_url = f"{public_url}/callback"
+
+        if not webhook_url:
+            return {"ok": False, "error": "ไม่พบ webhook URL"}, 400
+
         resp = requests.put(
             "https://api.line.me/v2/bot/channel/webhook/endpoint",
             headers={
