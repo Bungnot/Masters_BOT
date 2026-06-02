@@ -2614,7 +2614,7 @@ def bank_account_backoffice_flex():
                         },
                         {
                             "type": "text",
-                            "text": "เพื่อความปลอดภัย ไม่แสดงเลขบัญชีในกลุ่ม",
+                            "text": "รบกวนสมาชิกเช็คบัญชีก่อนโอนด้วยนะครับ",
                             "size": "sm",
                             "color": "#6B7280",
                             "wrap": True,
@@ -2639,7 +2639,7 @@ def bank_account_backoffice_flex():
                     "height": "md",
                     "action": {
                         "type": "uri",
-                        "label": "ติดตามแอดมิน",
+                        "label": "ขอเลขบัญชีกดที่นี่เลย!",
                         "uri": admin_url,
                     },
                 }
@@ -12630,23 +12630,16 @@ def handle_message(event):
             return
 
         if is_private_chat(event):
-            # แชทส่วนตัว: reply TEXT ก่อน แล้ว push Flex ตามหลัง
-            # (ไม่ใช้ reply_text_and_flex เพราะ LINE บางครั้ง reject messages 2 ชิ้นใน replyToken เดียว)
+            # แชทส่วนตัว: ส่งแค่ TEXT เลขบัญชีครบทุกบัญชี
             reply_text(event.reply_token, bank_account_text())
-            def _push_flex_private():
-                push_flex(user_id, "ขอเลขบัญชี", bank_account_backoffice_flex())
-            EXECUTOR.submit(_push_flex_private)
         else:
-            # กลุ่มหน้าบ้าน: reply Flex สีเขียวในกลุ่ม (ไม่แสดงเลขบัญชี)
-            # แล้ว push TEXT เลขบัญชีไปในแชทส่วนตัวของลูกค้าคนนั้น
+            # กลุ่มหน้าบ้าน: ส่งแค่ Flex สีเขียว ไม่แสดงเลขบัญชีในกลุ่ม
+            # ไม่ push เข้าแชทส่วนตัว ให้ลูกค้าไปพิม บช ในแชท 1-1 เอง
             reply_flex(
                 event.reply_token,
                 "ขอเลขบัญชี",
                 bank_account_backoffice_flex(),
             )
-            def _push_account_group():
-                push_text(user_id, bank_account_text())
-            EXECUTOR.submit(_push_account_group)
         return
 
 
