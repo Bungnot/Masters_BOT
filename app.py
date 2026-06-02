@@ -8136,6 +8136,59 @@ def handle_credit_adjust(event, cmd):
 
 
 
+
+def parse_delete_user_command(text: str):
+    """
+    คำสั่งลบ ID ลูกค้าออกจากระบบ (เฉพาะหลังบ้าน/แอดมิน)
+    รูปแบบ:
+      ลบID 5
+      ลบ ID 5
+      ลบสมาชิก 5
+      ลบลูกค้า 5
+    """
+    raw = re.sub(r"\s+", " ", (text or "").strip())
+    m = re.match(r"^ลบ\s*(?:ID|id|ไอดี|สมาชิก|ลูกค้า)\s+(\d+)$", raw, flags=re.IGNORECASE)
+    if m:
+        return {"member_no": int(m.group(1))}
+    return None
+
+
+def handle_delete_user(event, cmd: dict) -> str:
+    """
+    ลบ user ออกจาก USERS dict และบันทึกลงไฟล์
+    ต้องเป็นหลังบ้านหรือแอดมินเท่านั้น
+    """
+    user_id = event.source.user_id
+
+    if not can_use_backoffice_command(event, user_id):
+        return "คำสั่งนี้ใช้ได้เฉพาะหลังบ้านหรือแอดมิน"
+
+    target = find_user_by_member_no(cmd["member_no"])
+    if not target:
+        return (
+            f"❌ ไม่พบสมาชิก ID {cmd['member_no']}\n"
+            f"ตรวจสอบ ID ให้ถูกต้องก่อนลบ"
+        )
+
+    target_line_id = target.get("user_id")
+    name = target.get("line_name") or target.get("name") or f"สมาชิก#{cmd['member_no']}"
+    credit = int(target.get("credit", 0) or 0)
+    member_no = target.get("member_no")
+
+    # ลบออกจาก USERS
+    with STATE_LOCK:
+        USERS.pop(target_line_id, None)
+        save_user_db()
+
+    return (
+        f"✅ ลบสมาชิกสำเร็จ\n\n"
+        f"ชื่อ: {name}\n"
+        f"ID: {member_no}\n"
+        f"เครดิตที่มีอยู่: {credit:,}\n\n"
+        f"⚠️ ข้อมูลสมาชิกนี้ถูกลบออกจากระบบแล้ว"
+    )
+
+
 def clear_pending_round_clear():
     """ล้างสถานะรอยืนยันคำสั่ง CR"""
     STATE["pending_clear"] = None
@@ -13073,6 +13126,13 @@ def handle_message(event):
     credit_cmd = parse_credit_command(text)
     if credit_cmd:
         msg = handle_credit_adjust(event, credit_cmd)
+        reply_text(event.reply_token, msg)
+        return
+
+    # ลบ ID ลูกค้าออกจากระบบ
+    delete_user_cmd = parse_delete_user_command(text)
+    if delete_user_cmd:
+        msg = handle_delete_user(event, delete_user_cmd)
         reply_text(event.reply_token, msg)
         return
 
