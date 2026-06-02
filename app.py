@@ -3032,6 +3032,9 @@ def format_play_text(
         base = "ช่างแพ้"
     elif side == "ช่างไม่แพ้":
         base = "ช่างไม่แพ้"
+    elif side in {"คู่", "คี่", "ลำ", "บ่ลำ"}:
+        # คู่/คี่/ลำ/บ่ลำ ไม่มีราคาช่างและ offset
+        return side
     else:
         base = "-"
 
@@ -3743,7 +3746,12 @@ def get_match_price_range(match):
     """
     ถ้าแผลมีราคาเล่นเฉพาะ เช่น 330-360ล500 ให้ใช้ราคานั้น
     ถ้าไม่มี ให้ใช้ราคาช่างของฐาน/รอบที่ match นั้นผูกอยู่ ไม่ใช้ STATE ฐานอื่น
+    คู่/คี่ และ ลำ/บ่ลำ ไม่ใช้ราคาช่าง คืน None, None
     """
+    # คู่/คี่/ลำ/บ่ลำ ไม่มีราคาช่าง
+    if is_even_odd_side(match.get("maker_side", "")) or is_lam_side(match.get("maker_side", "")):
+        return None, None
+
     custom_min = match.get("custom_price_min")
     custom_max = match.get("custom_price_max")
 
@@ -6777,8 +6785,17 @@ def matched_flex_for_user(match, viewer_id):
     taker_side = opposite_side(maker_side)
     play_text = format_match_play_text(match)
     price_min, price_max = get_match_price_range(match)
-    price_label = "ราคาเล่น" if match.get("is_custom_price") else "ราคาช่าง"
-    price_text = format_price_range_text(price_min, price_max)
+
+    # คู่/คี่/ลำ/บ่ลำ ไม่มีราคาช่าง — แสดงประเภทการเล่นแทน
+    if is_even_odd_side(maker_side):
+        price_label = "ประเภท"
+        price_text = "คู่ vs คี่"
+    elif is_lam_side(maker_side):
+        price_label = "ประเภท"
+        price_text = "ลำ vs บ่ลำ"
+    else:
+        price_label = "ราคาเล่น" if match.get("is_custom_price") else "ราคาช่าง"
+        price_text = format_price_range_text(price_min, price_max)
 
     maker_name = maker.get("line_name") or maker.get("name") or "ผู้โพสต์"
     taker_name = taker.get("line_name") or taker.get("name") or "ผู้ติด"
@@ -6800,8 +6817,8 @@ def matched_flex_for_user(match, viewer_id):
         viewer_side_label = f"(ทาย{taker_side})"
 
     def side_badge(side_text):
-        """badge แสดงฝั่งทาย เช่น ทายแพ้ / ทายชนะ"""
-        if side_text == "ชนะ":
+        """badge แสดงฝั่งทาย"""
+        if side_text in {"ชนะ", "คู่", "ลำ"}:
             bg, color = "#DCFCE7", color_win
         else:
             bg, color = "#FEE2E2", color_lose
@@ -6846,9 +6863,18 @@ def matched_flex_for_user(match, viewer_id):
             ],
         }
 
-    status_msg = f"คุณทาย{viewer_side} {'ลุ้นผลได้เลย! 🎉' if is_win else 'สู้ๆ นะครับ! 💪'}"
-    status_bg    = "#F0FDF4" if is_win else "#FFF1F2"
-    status_color = color_win if is_win else color_lose
+    if is_even_odd_side(maker_side):
+        status_msg = f"คุณเดา{viewer_side} — รอผลรอบนี้ได้เลย! 🎲"
+        status_bg    = "#F0FDF4"
+        status_color = color_win
+    elif is_lam_side(maker_side):
+        status_msg = f"คุณเดา{viewer_side} — รอสรุปผลลำ/บ่ลำ! 🎲"
+        status_bg    = "#EFF6FF"
+        status_color = "#1D4ED8"
+    else:
+        status_msg = f"คุณทาย{viewer_side} {'ลุ้นผลได้เลย! 🎉' if is_win else 'สู้ๆ นะครับ! 💪'}"
+        status_bg    = "#F0FDF4" if is_win else "#FFF1F2"
+        status_color = color_win if is_win else color_lose
     status_icon  = "🎲"
 
     return {
@@ -7817,9 +7843,15 @@ def result_summary_flex(user_id: str, rows: list, net: int):
             delta_text = "0.00"
 
         row_price_text = row.get('price_text') or format_price_range_text(row.get('price_min'), row.get('price_max'))
-        detail_text = f"คุณทาย: {row['user_side']}"
-        if row_price_text and not is_waiting_two_digit_start_price_text(row_price_text):
-            detail_text += f" | ราคา: {row_price_text}"
+        user_side = row['user_side']
+        if is_even_odd_side(user_side):
+            detail_text = f"คุณเดา: {user_side} (คู่/คี่)"
+        elif is_lam_side(user_side):
+            detail_text = f"คุณเดา: {user_side} (ลำ/บ่ลำ)"
+        else:
+            detail_text = f"คุณทาย: {user_side}"
+            if row_price_text and not is_waiting_two_digit_start_price_text(row_price_text):
+                detail_text += f" | ราคา: {row_price_text}"
 
         row_contents.extend([
             {
@@ -8995,8 +9027,17 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     if not is_current_round_chat(event):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
-    if not STATE["opened"]:
-        return "ปิดอยู่ หรือยังไม่เปิดรอบ จึงไม่สามารถติดได้"
+    # ตรวจว่า post ที่ถูก reply เป็น คู่/คี่ หรือ ลำ/บ่ลำ หรือเปล่า
+    # ถ้าใช่ ให้ข้ามเช็ค opened เพราะ:
+    # - คู่/คี่: เล่นได้ก่อนเปิด ขณะเปิด และหลังปิด
+    # - ลำ/บ่ลำ: เช็คแล้วตอน create_post (ต้องเปิดอยู่) แต่ตอน ต ยืนยัน ไม่ต้องเช็คซ้ำ
+    _quoted_post = POSTS.get(quoted_message_id) if quoted_message_id else None
+    _quoted_side = (_quoted_post or {}).get("maker_side", "")
+    _is_special_market = is_even_odd_side(_quoted_side) or is_lam_side(_quoted_side)
+
+    if not _is_special_market:
+        if not STATE["opened"]:
+            return "ปิดอยู่ หรือยังไม่เปิดรอบ จึงไม่สามารถติดได้"
 
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่สามารถติดเพิ่มได้"
