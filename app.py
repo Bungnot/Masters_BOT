@@ -10042,6 +10042,7 @@ def create_match_from_pending(post, taker_entry):
         "only_when_no_price": post.get("only_when_no_price", False),
         "plus": post["plus"],
         "amount": amount,
+        "linked_offers": post.get("linked_offers", []),
         "status": "matched",
         "created_at": now_text(),
         "settled_at": None,
