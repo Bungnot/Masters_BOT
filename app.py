@@ -2973,7 +2973,7 @@ def rules_flex() -> dict:
                     "type": "image",
                     "url": RULES_IMAGE_URL,
                     "size": "full",
-                    "aspectRatio": "263:166",
+                    "aspectRatio": "5:7",
                     "aspectMode": "fit",
                     "action": {
                         "type": "uri",
