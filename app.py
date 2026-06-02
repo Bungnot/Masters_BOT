@@ -2457,6 +2457,8 @@ SINGLE_AUTO_TOPUP_RECEIVER = {
 BANK_ACCOUNT_COOLDOWN_SECONDS = int(os.getenv("BANK_ACCOUNT_COOLDOWN_SECONDS", "10"))
 BANK_ACCOUNT_COOLDOWN_CACHE = {}
 BANK_BACKOFFICE_URL = os.getenv("BANK_BACKOFFICE_URL", "https://page.line.me/631kykty").strip() or "https://page.line.me/631kykty"
+# ลิ้งค์แอดมิน LINE OA ที่แสดงในปุ่ม Flex กลุ่ม (ไม่แสดงเลขบัญชีในกลุ่ม)
+LINE_ADMIN_URL = os.getenv("LINE_ADMIN_URL", "https://page.line.me/730vddej").strip() or "https://page.line.me/730vddej"
 
 
 def is_bank_account_request(text: str) -> bool:
@@ -2522,6 +2524,60 @@ def bank_account_backoffice_flex():
                         "uri": BANK_BACKOFFICE_URL,
                     },
                 }
+            ],
+        },
+    }
+
+
+def bank_account_group_flex() -> dict:
+    """
+    Flex สีเขียวสวยงาม แสดงในกลุ่มเมื่อลูกค้าพิมพ์ บช/บัญชี
+    ไม่โชว์เลขบัญชีในกลุ่ม — มีแค่ปุ่มลิ้งค์ไปหาแอดมิน
+    """
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#16A34A",
+            "paddingAll": "14px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "💳 ขอเลขบัญชี",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                    "align": "center",
+                },
+                {
+                    "type": "text",
+                    "text": "กดปุ่มด้านล่างเพื่อรับเลขบัญชีจากแอดมิน",
+                    "size": "xs",
+                    "color": "#bbf7d0",
+                    "align": "center",
+                    "margin": "sm",
+                    "wrap": True,
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "12px",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#16A34A",
+                    "height": "md",
+                    "action": {
+                        "type": "uri",
+                        "label": "ขอเลขบัญชีกดที่นี่!",
+                        "uri": LINE_ADMIN_URL,
+                    },
+                },
             ],
         },
     }
@@ -6843,6 +6899,18 @@ def oe_matched_flex(bet: dict, viewer_id: str) -> dict:
                         },
                     ],
                 },
+                # ── ปุ่มขอยกเลิก (คี่/คู่) ───────────────────────────────
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "แตะเพื่อขอยกเลิก",
+                        "data": f"action=oe_request_cancel&bet_id={bet['bet_id']}",
+                        "displayText": "ขอยกเลิก",
+                    },
+                },
             ],
         },
     }
@@ -7081,13 +7149,306 @@ def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
     return None
 
 
-def settle_odd_even_bets_for_round(round_id: str, result_value: int):
+def oe_cancel_request_flex(bet: dict, requester_id: str) -> dict:
+    """Flex แจ้งอีกฝ่ายว่ามีคำขอยกเลิก (คี่/คู่)"""
+    requester = USERS.get(requester_id, {})
+    requester_name = requester.get("line_name") or requester.get("name") or "ผู้ขอยกเลิก"
+    bet_id = bet.get("bet_id", "")
+    amount = bet.get("amount", 0)
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": "#F59E0B",
+            "paddingAll": "14px",
+            "contents": [
+                {"type": "text", "text": "⚠️  คำขอยกเลิก (คี่/คู่)",
+                 "weight": "bold", "size": "md", "color": "#FFFFFF"},
+                {"type": "text", "text": f"ยอด {amount:,} บาท",
+                 "size": "xs", "color": "#FEF3C7"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical",
+            "paddingAll": "14px", "spacing": "md",
+            "contents": [
+                {"type": "text",
+                 "text": f"🙋 {requester_name} ขอยกเลิกรายการนี้\nกรุณาตอบรับหรือปฏิเสธ",
+                 "wrap": True, "size": "sm", "color": "#374151"},
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "button", "style": "primary", "height": "sm",
+                            "color": "#16A34A",
+                            "action": {
+                                "type": "postback",
+                                "label": "✅ ยืนยันยกเลิก",
+                                "data": f"action=oe_approve_cancel&bet_id={bet_id}",
+                                "displayText": "ยืนยันยกเลิก",
+                            },
+                        },
+                        {
+                            "type": "button", "style": "secondary", "height": "sm",
+                            "action": {
+                                "type": "postback",
+                                "label": "❌ ปฏิเสธ",
+                                "data": f"action=oe_reject_cancel&bet_id={bet_id}",
+                                "displayText": "ปฏิเสธคำขอยกเลิก",
+                            },
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+
+def oe_request_cancel(bet_id: str, requester_id: str) -> str:
+    """ผู้เล่นกดขอยกเลิกบิลคี่/คู่ที่ matched แล้ว"""
+    bet = ODD_EVEN_BETS.get(bet_id)
+    if not bet:
+        return "ไม่พบรายการ"
+    if not STATE.get("opened"):
+        return "ปิดรอบแล้ว ไม่สามารถขอยกเลิกได้"
+    if bet.get("status") != "matched":
+        return "รายการนี้ไม่อยู่ในสถานะที่ขอยกเลิกได้"
+    if requester_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+        return "คุณไม่ใช่คู่รายการนี้"
+    if bet.get("cancel_requested"):
+        requester_name = user_display_name(bet.get("cancel_requested_by"))
+        return (
+            f"รายการนี้มีการขอยกเลิกไปแล้ว\n"
+            f"ผู้ขอ: {requester_name}\n"
+            f"ขอยกเลิกได้แค่ 1 ครั้งต่อรายการ"
+        )
+    bet["cancel_requested"] = True
+    bet["cancel_requested_by"] = requester_id
+    bet["cancel_requested_at"] = now_text()
+    save_round_backup_db(reason="oe_cancel_requested")
+    other_id = bet["taker_id"] if requester_id == bet["maker_id"] else bet["maker_id"]
+    push_flex_async(other_id, "มีคำขอยกเลิก (คี่/คู่)", oe_cancel_request_flex(bet, requester_id))
+    return "ส่งคำขอยกเลิกให้อีกฝ่ายแล้ว\nรอการยืนยันจากอีกฝ่าย"
+
+
+def oe_approve_cancel(bet_id: str, approver_id: str) -> str:
+    """อีกฝ่ายกดยืนยันยกเลิก — คืนเครดิตทั้งคู่"""
+    bet = ODD_EVEN_BETS.get(bet_id)
+    if not bet:
+        return "ไม่พบรายการ"
+    if not STATE.get("opened"):
+        return "ปิดรอบแล้ว ไม่สามารถตอบคำขอยกเลิกได้"
+    if bet.get("status") != "matched":
+        return "รายการนี้ไม่อยู่ในสถานะที่ตอบคำขอยกเลิกได้"
+    if not bet.get("cancel_requested"):
+        return "ยังไม่มีคำขอยกเลิกสำหรับรายการนี้"
+    if approver_id == bet.get("cancel_requested_by"):
+        return "ผู้ขอยกเลิกไม่สามารถยืนยันคำขอของตัวเองได้"
+    if approver_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+        return "คุณไม่ใช่คู่รายการนี้"
+    amount = bet["amount"]
+    maker_id = bet["maker_id"]
+    taker_id = bet["taker_id"]
+    for uid in [maker_id, taker_id]:
+        u = USERS.get(uid)
+        if u:
+            u["credit"] = u.get("credit", 0) + amount
+    bet["status"] = "cancelled"
+    bet["cancelled_at"] = now_text()
+    bet["cancelled_by"] = approver_id
+    save_user_db()
+    save_round_backup_db(reason="oe_cancel_approved")
+    msg = (
+        f"✅ ยกเลิกรายการคี่/คู่สำเร็จ\n"
+        f"ยอด {amount:,} บาท คืนเครดิตให้ทั้งสองฝ่ายแล้ว"
+    )
+    requester_id = bet.get("cancel_requested_by")
+    notify_id = requester_id if approver_id != requester_id else (
+        taker_id if approver_id == maker_id else maker_id
+    )
+    push_text(notify_id, msg)
+    return msg
+
+
+def oe_reject_cancel(bet_id: str, rejecter_id: str) -> str:
+    """อีกฝ่ายกดปฏิเสธคำขอยกเลิก"""
+    bet = ODD_EVEN_BETS.get(bet_id)
+    if not bet:
+        return "ไม่พบรายการ"
+    if not STATE.get("opened"):
+        return "ปิดรอบแล้ว ไม่สามารถตอบคำขอยกเลิกได้"
+    if bet.get("status") != "matched":
+        return "รายการนี้ไม่อยู่ในสถานะที่ตอบคำขอยกเลิกได้"
+    if not bet.get("cancel_requested"):
+        return "ยังไม่มีคำขอยกเลิกสำหรับรายการนี้"
+    if rejecter_id == bet.get("cancel_requested_by"):
+        return "ผู้ขอยกเลิกไม่สามารถปฏิเสธคำขอของตัวเองได้"
+    if rejecter_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+        return "คุณไม่ใช่คู่รายการนี้"
+    requester_id = bet.get("cancel_requested_by")
+    bet["cancel_requested"] = False
+    bet["cancel_requested_by"] = None
+    bet["cancel_requested_at"] = None
+    save_round_backup_db(reason="oe_cancel_rejected")
+    if requester_id:
+        push_text(requester_id, "❌ อีกฝ่ายปฏิเสธคำขอยกเลิก รายการยังคงดำเนินต่อ")
+    return "✕ ปฏิเสธคำขอยกเลิกแล้ว รายการยังคงดำเนินต่อ"
+
+def oe_cancel_request_flex(bet: dict, requester_id: str) -> dict:
+    """Flex แจ้งอีกฝ่ายว่ามีคำขอยกเลิก (คี่/คู่)"""
+    requester = USERS.get(requester_id, {})
+    requester_name = requester.get("line_name") or requester.get("name") or "ผู้ขอยกเลิก"
+    bet_id = bet.get("bet_id", "")
+    amount = bet.get("amount", 0)
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": "#F59E0B",
+            "paddingAll": "14px",
+            "contents": [
+                {"type": "text", "text": "⚠️  คำขอยกเลิก (คี่/คู่)",
+                 "weight": "bold", "size": "md", "color": "#FFFFFF"},
+                {"type": "text", "text": f"ยอด {amount:,} บาท",
+                 "size": "xs", "color": "#FEF3C7"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical",
+            "paddingAll": "14px", "spacing": "md",
+            "contents": [
+                {"type": "text",
+                 "text": f"🙋 {requester_name} ขอยกเลิกรายการนี้\nกรุณาตอบรับหรือปฏิเสธ",
+                 "wrap": True, "size": "sm", "color": "#374151"},
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "button", "style": "primary", "height": "sm",
+                            "color": "#16A34A",
+                            "action": {
+                                "type": "postback",
+                                "label": "✅ ยืนยันยกเลิก",
+                                "data": f"action=oe_approve_cancel&bet_id={bet_id}",
+                                "displayText": "ยืนยันยกเลิก",
+                            },
+                        },
+                        {
+                            "type": "button", "style": "secondary", "height": "sm",
+                            "action": {
+                                "type": "postback",
+                                "label": "❌ ปฏิเสธ",
+                                "data": f"action=oe_reject_cancel&bet_id={bet_id}",
+                                "displayText": "ปฏิเสธคำขอยกเลิก",
+                            },
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+
+def oe_request_cancel(bet_id: str, requester_id: str) -> str:
+    """ผู้เล่นกดขอยกเลิกบิลคี่/คู่ที่ matched แล้ว"""
+    bet = ODD_EVEN_BETS.get(bet_id)
+    if not bet:
+        return "ไม่พบรายการ"
+    if not STATE.get("opened"):
+        return "ปิดรอบแล้ว ไม่สามารถขอยกเลิกได้"
+    if bet.get("status") != "matched":
+        return "รายการนี้ไม่อยู่ในสถานะที่ขอยกเลิกได้"
+    if requester_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+        return "คุณไม่ใช่คู่รายการนี้"
+    if bet.get("cancel_requested"):
+        requester_name = user_display_name(bet.get("cancel_requested_by"))
+        return (
+            f"รายการนี้มีการขอยกเลิกไปแล้ว\n"
+            f"ผู้ขอ: {requester_name}\n"
+            f"ขอยกเลิกได้แค่ 1 ครั้งต่อรายการ"
+        )
+    bet["cancel_requested"] = True
+    bet["cancel_requested_by"] = requester_id
+    bet["cancel_requested_at"] = now_text()
+    save_round_backup_db(reason="oe_cancel_requested")
+    other_id = bet["taker_id"] if requester_id == bet["maker_id"] else bet["maker_id"]
+    push_flex_async(other_id, "มีคำขอยกเลิก (คี่/คู่)", oe_cancel_request_flex(bet, requester_id))
+    return "ส่งคำขอยกเลิกให้อีกฝ่ายแล้ว\nรอการยืนยันจากอีกฝ่าย"
+
+
+def oe_approve_cancel(bet_id: str, approver_id: str) -> str:
+    """อีกฝ่ายกดยืนยันยกเลิก — คืนเครดิตทั้งคู่"""
+    bet = ODD_EVEN_BETS.get(bet_id)
+    if not bet:
+        return "ไม่พบรายการ"
+    if not STATE.get("opened"):
+        return "ปิดรอบแล้ว ไม่สามารถตอบคำขอยกเลิกได้"
+    if bet.get("status") != "matched":
+        return "รายการนี้ไม่อยู่ในสถานะที่ตอบคำขอยกเลิกได้"
+    if not bet.get("cancel_requested"):
+        return "ยังไม่มีคำขอยกเลิกสำหรับรายการนี้"
+    if approver_id == bet.get("cancel_requested_by"):
+        return "ผู้ขอยกเลิกไม่สามารถยืนยันคำขอของตัวเองได้"
+    if approver_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+        return "คุณไม่ใช่คู่รายการนี้"
+    amount = bet["amount"]
+    maker_id = bet["maker_id"]
+    taker_id = bet["taker_id"]
+    for uid in [maker_id, taker_id]:
+        u = USERS.get(uid)
+        if u:
+            u["credit"] = u.get("credit", 0) + amount
+    bet["status"] = "cancelled"
+    bet["cancelled_at"] = now_text()
+    bet["cancelled_by"] = approver_id
+    save_user_db()
+    save_round_backup_db(reason="oe_cancel_approved")
+    msg = (
+        f"✅ ยกเลิกรายการคี่/คู่สำเร็จ\n"
+        f"ยอด {amount:,} บาท คืนเครดิตให้ทั้งสองฝ่ายแล้ว"
+    )
+    requester_id = bet.get("cancel_requested_by")
+    notify_id = requester_id if approver_id != requester_id else (
+        taker_id if approver_id == maker_id else maker_id
+    )
+    push_text(notify_id, msg)
+    return msg
+
+
+def oe_reject_cancel(bet_id: str, rejecter_id: str) -> str:
+    """อีกฝ่ายกดปฏิเสธคำขอยกเลิก"""
+    bet = ODD_EVEN_BETS.get(bet_id)
+    if not bet:
+        return "ไม่พบรายการ"
+    if not STATE.get("opened"):
+        return "ปิดรอบแล้ว ไม่สามารถตอบคำขอยกเลิกได้"
+    if bet.get("status") != "matched":
+        return "รายการนี้ไม่อยู่ในสถานะที่ตอบคำขอยกเลิกได้"
+    if not bet.get("cancel_requested"):
+        return "ยังไม่มีคำขอยกเลิกสำหรับรายการนี้"
+    if rejecter_id == bet.get("cancel_requested_by"):
+        return "ผู้ขอยกเลิกไม่สามารถปฏิเสธคำขอของตัวเองได้"
+    if rejecter_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+        return "คุณไม่ใช่คู่รายการนี้"
+    requester_id = bet.get("cancel_requested_by")
+    bet["cancel_requested"] = False
+    bet["cancel_requested_by"] = None
+    bet["cancel_requested_at"] = None
+    save_round_backup_db(reason="oe_cancel_rejected")
+    if requester_id:
+        push_text(requester_id, "❌ อีกฝ่ายปฏิเสธคำขอยกเลิก รายการยังคงดำเนินต่อ")
+    return "✕ ปฏิเสธคำขอยกเลิกแล้ว รายการยังคงดำเนินต่อ"
+
+def settle_odd_even_bets_for_round(round_id: str, result_value: int) -> dict:
     """
     เรียกหลัง settle_round สำเร็จ
     ตัดสินบิลคี่/คู่ที่ matched ในรอบนั้น ๆ ด้วยตัวเลขผลจากแอดมิน
+    คืน dict {user_id: [oe_row, ...]} เพื่อให้ caller รวมเข้า result_summary_flex
     """
     if not round_id:
-        return
+        return {}
 
     commission_percent = COMMISSION_PERCENT
 
@@ -7097,6 +7458,8 @@ def settle_odd_even_bets_for_round(round_id: str, result_value: int):
     ]
 
     winning_choice = "คู่" if (result_value % 100) % 2 == 0 else "คี่"
+    # oe_rows[user_id] = list of row dicts สำหรับแสดงใน result_summary_flex
+    oe_rows: dict = {}
 
     for bet in target_bets:
         maker_id = bet["maker_id"]
@@ -7126,16 +7489,29 @@ def settle_odd_even_bets_for_round(round_id: str, result_value: int):
         bet["winner_id"] = winner_id
         bet["commission"] = commission
 
-        push_flex_async(
-            maker_id,
-            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
-            oe_result_flex(bet, maker_id)
-        )
-        push_flex_async(
-            taker_id,
-            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
-            oe_result_flex(bet, taker_id)
-        )
+        # สร้าง row สำหรับรวมใน result_summary_flex
+        for uid, my_choice, other_id in [
+            (maker_id, maker_choice, taker_id),
+            (taker_id, taker_choice, maker_id),
+        ]:
+            if my_choice == winning_choice:
+                status = "ชนะ"
+                delta = amount - commission
+            else:
+                status = "แพ้"
+                delta = -amount
+            oe_rows.setdefault(uid, []).append({
+                "order_no": bet.get("order_no") or "OE",
+                "other_id": other_id,
+                "user_side": f"{my_choice} (คี่/คู่)",
+                "status": status,
+                "delta": delta,
+                "price_min": None,
+                "price_max": None,
+                "price_text": "คี่/คู่",
+                "commission": commission if status == "ชนะ" else 0,
+                "is_oe": True,
+            })
 
     save_user_db()
 
@@ -7144,23 +7520,30 @@ def settle_odd_even_bets_for_round(round_id: str, result_value: int):
     # คืนบิล pending_taker ค้าง (มีคนติดแต่เจ้าของยังไม่ยืนยัน)
     _cancel_pending_odd_even_for_round(round_id, reason=f"แจ้งผล {result_value}")
 
+    return oe_rows
 
-def settle_odd_even_bets_all_jow_for_round(round_id: str, reason: str):
+
+def settle_odd_even_bets_all_jow_for_round(round_id: str, reason: str) -> dict:
     """
     กรณีแจ้งผลคืนทุน (จาวทุกแผล / บั้งไฟหาย) คืนเครดิตทุกบิลคี่/คู่ในรอบ
+    คืน dict {user_id: [oe_row, ...]} สำหรับรวมใน result_summary_flex
     """
     if not round_id:
-        return
+        return {}
 
     target_bets = [
         b for b in ODD_EVEN_BETS.values()
         if b.get("round_id") == round_id and b.get("status") == "matched"
     ]
 
+    oe_rows: dict = {}
+
     for bet in target_bets:
         maker_id = bet["maker_id"]
         taker_id = bet["taker_id"]
         amount = bet["amount"]
+        maker_choice = bet["maker_choice"]
+        taker_choice = "คู่" if maker_choice == "คี่" else "คี่"
         maker = USERS.get(maker_id)
         taker = USERS.get(taker_id)
         if maker:
@@ -7175,20 +7558,28 @@ def settle_odd_even_bets_all_jow_for_round(round_id: str, reason: str):
         bet["winner_id"] = None
         bet["commission"] = 0
 
-        push_flex_async(
-            maker_id,
-            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
-            oe_result_flex(bet, maker_id)
-        )
-        push_flex_async(
-            taker_id,
-            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
-            oe_result_flex(bet, taker_id)
-        )
+        for uid, my_choice, other_id in [
+            (maker_id, maker_choice, taker_id),
+            (taker_id, taker_choice, maker_id),
+        ]:
+            oe_rows.setdefault(uid, []).append({
+                "order_no": bet.get("order_no") or "OE",
+                "other_id": other_id,
+                "user_side": f"{my_choice} (คี่/คู่)",
+                "status": "จาว",
+                "delta": 0,
+                "price_min": None,
+                "price_max": None,
+                "price_text": "คี่/คู่",
+                "commission": 0,
+                "is_oe": True,
+            })
 
     save_user_db()
     _cancel_unmatched_odd_even_for_round(round_id, reason=reason)
     _cancel_pending_odd_even_for_round(round_id, reason=reason)
+
+    return oe_rows
 
 
 def _cancel_unmatched_odd_even_for_round(round_id: str, reason: str = "รอบปิด"):
@@ -7295,10 +7686,16 @@ def is_clear_round_backups_command(text: str) -> bool:
 
 def parse_credit_command(text):
     """
-    $+ 1 1000
-    $- 1 1000
+    รองรับรูปแบบ:
+      $+ 1 1000  /  $+1 1000  /  $- 1 1000  /  $-1 1000
+      +1 1000    /  + 1 1000  /  -1 1000    /  - 1 1000
     """
-    m = re.match(r"^\$(\+|-)\s+(\d+)\s+(\d+)$", text.strip())
+    s = text.strip()
+    # รูปแบบ $+/-  (มี $ นำหน้า)
+    m = re.match(r"^\$\s*(\+|-)\s*(\d+)\s+(\d+)$", s)
+    if not m:
+        # รูปแบบไม่มี $  เช่น +1 100 / -1 100 / + 1 100 / - 1 100
+        m = re.match(r"^(\+|-)\s*(\d+)\s+(\d+)$", s)
     if not m:
         return None
 
@@ -8462,6 +8859,18 @@ def result_summary_flex(user_id: str, rows: list, net: int):
         if row_price_text and not is_waiting_two_digit_start_price_text(row_price_text):
             detail_text += f" | ราคา: {row_price_text}"
 
+        # badge พิเศษสำหรับแผลคี่/คู่
+        oe_badge = []
+        if row.get("is_oe"):
+            oe_badge = [{
+                "type": "box", "layout": "vertical",
+                "backgroundColor": "#EDE9FE", "cornerRadius": "8px",
+                "paddingStart": "6px", "paddingEnd": "6px",
+                "paddingTop": "2px", "paddingBottom": "2px",
+                "contents": [{"type": "text", "text": "คี่/คู่",
+                               "size": "xxs", "color": "#6D28D9", "weight": "bold"}],
+            }]
+
         row_contents.extend([
             {
                 "type": "box",
@@ -8474,12 +8883,20 @@ def result_summary_flex(user_id: str, rows: list, net: int):
                         "flex": 4,
                         "contents": [
                             {
-                                "type": "text",
-                                "text": f"#{row['order_no']} {emoji} {status} vs {other.get('line_name') or other.get('name') or 'User'}",
-                                "size": "sm",
-                                "weight": "bold",
-                                "wrap": True,
-                                "color": "#111111",
+                                "type": "box", "layout": "horizontal",
+                                "spacing": "sm", "alignItems": "center",
+                                "contents": [
+                                    {
+                                        "type": "text",
+                                        "text": f"#{row['order_no']} {emoji} {status} vs {other.get('line_name') or other.get('name') or 'User'}",
+                                        "size": "sm",
+                                        "weight": "bold",
+                                        "wrap": True,
+                                        "color": "#111111",
+                                        "flex": 1,
+                                    },
+                                    *oe_badge,
+                                ],
                             },
                             {
                                 "type": "text",
@@ -10372,17 +10789,19 @@ def settle_round(result_value: int):
     save_user_db()
 
     # ส่ง Flex สรุปผลแบบ async เพื่อลดอาการหน่วง
-    for uid, rows in user_rows.items():
+    # ตัดสินบิลคี่/คู่พร้อมกัน แล้วรวม rows เข้า Flex เดียวกัน ประหยัด LINE message quota
+    oe_rows = settle_odd_even_bets_for_round(current_round_id, result_value)
+
+    # รวม user_rows (แผลปกติ) + oe_rows (คี่/คู่) ก่อนส่ง
+    all_uids = set(user_rows.keys()) | set(oe_rows.keys())
+    for uid in all_uids:
+        combined_rows = (user_rows.get(uid) or []) + (oe_rows.get(uid) or [])
+        combined_net = user_net.get(uid, 0) + sum(r["delta"] for r in oe_rows.get(uid, []))
         push_flex_async(
             uid,
             f"ผลรอบ {STATE.get('camp_name')}",
-            result_summary_flex(uid, rows, user_net.get(uid, 0))
+            result_summary_flex(uid, combined_rows, combined_net)
         )
-
-    # ======================================================
-    # ตัดสินบิลคี่/คู่ในรอบนี้ด้วยผลเดียวกัน
-    # ======================================================
-    settle_odd_even_bets_for_round(current_round_id, result_value)
 
     # ตอบกลับในกลุ่มด้วย Flex ใหญ่เต็มจอ พร้อมสถานะ ✅❌⛔
     return public_result_reply_payload(result_value)
@@ -10477,15 +10896,18 @@ def settle_round_all_jow(reason: str):
 
     save_user_db()
 
-    for uid, rows in user_rows.items():
+    # ตัดสินบิลคี่/คู่แบบคืนทุนทุกคน แล้วรวม rows เข้า Flex เดียวกัน
+    oe_rows = settle_odd_even_bets_all_jow_for_round(current_round_id, reason)
+
+    all_uids = set(user_rows.keys()) | set(oe_rows.keys())
+    for uid in all_uids:
+        combined_rows = (user_rows.get(uid) or []) + (oe_rows.get(uid) or [])
+        combined_net = user_net.get(uid, 0) + sum(r["delta"] for r in oe_rows.get(uid, []))
         push_flex_async(
             uid,
             f"ผลรอบ {STATE.get('camp_name')}",
-            result_summary_flex(uid, rows, user_net.get(uid, 0))
+            result_summary_flex(uid, combined_rows, combined_net)
         )
-
-    # ตัดสินบิลคี่/คู่แบบคืนทุนทุกคน
-    settle_odd_even_bets_all_jow_for_round(current_round_id, reason)
 
     # ตอบกลับในกลุ่มด้วย Flex ใหญ่เต็มจอ พร้อมสถานะจาว ⛔
     return public_result_reply_payload(reason)
@@ -13266,15 +13688,16 @@ def handle_message(event):
         if should_skip_bank_account_by_cooldown(event):
             return
 
-        # ส่ง 2 อย่างใน reply token เดียวกัน:
-        # 1) ข้อความบัญชีแบบ TEXT
-        # 2) FLEX ปุ่มสีเขียวสำหรับกดเข้าหลังบ้าน
-        reply_text_and_flex(
-            event.reply_token,
-            bank_account_text(),
-            "กดเข้าหลังบ้าน",
-            bank_account_backoffice_flex(),
-        )
+        if is_private_chat(event):
+            # แชทส่วนตัว: ส่ง TEXT เลขบัญชีเต็ม
+            reply_text(event.reply_token, bank_account_text())
+        else:
+            # กลุ่มหน้าบ้าน: ส่งเฉพาะ Flex สีเขียวพร้อมปุ่มลิ้งค์แอดมิน ไม่โชว์เลขบัญชีในกลุ่ม
+            reply_flex(
+                event.reply_token,
+                "ขอเลขบัญชี",
+                bank_account_group_flex(),
+            )
         return
 
 
@@ -13853,6 +14276,24 @@ def handle_postback(event):
 
     if action == "reject_cancel":
         msg = reject_cancel(match_id, user_id)
+        reply_text(event.reply_token, msg)
+        return
+
+    # ── คี่/คู่ cancel handlers ──────────────────────────────────
+    bet_id = params.get("bet_id")
+
+    if action == "oe_request_cancel":
+        msg = oe_request_cancel(bet_id, user_id)
+        reply_text(event.reply_token, msg)
+        return
+
+    if action == "oe_approve_cancel":
+        msg = oe_approve_cancel(bet_id, user_id)
+        reply_text(event.reply_token, msg)
+        return
+
+    if action == "oe_reject_cancel":
+        msg = oe_reject_cancel(bet_id, user_id)
         reply_text(event.reply_token, msg)
         return
 
