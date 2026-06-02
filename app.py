@@ -274,11 +274,12 @@ POSTS = {}
 MATCHES = {}
 
 # ======================================================
-# คู่/คี่ (Even/Odd) Betting System
-# เก็บรายการเดา คู่/คี่ แยกต่างหาก
-# เล่นได้ทั้งก่อนเปิด, ขณะเปิด, และหลังปิด (แต่ก่อนแจ้งผล)
+# คู่/คี่ และ ลำ/บ่ลำ — ระบบจับคู่แยกต่างหาก
+# EVEN_ODD_BETS: เก็บโพสต์และ match คู่/คี่ (แยก _type)
+# LAM_BETS:      เก็บโพสต์และ match ลำ/บ่ลำ (แยก _type)
 # ======================================================
 EVEN_ODD_BETS = {}
+LAM_BETS = {}
 
 
 # ======================================================
@@ -6554,29 +6555,19 @@ def parse_offer(text):
 
 # ======================================================
 # คู่/คี่ (Even/Odd) Matching System
-# ระบบจับคู่ คู่ vs คี่ เหมือนระบบ ชล/ชถ
-# Flow: โพสต์ คู่300 → ฝั่งตรงข้ามมา reply ติด → จับคู่ → แจ้งผล → หัก%
+# Flow: คู่300 / คี่300 → reply ต → จับคู่ → แจ้งผลตัวเลขปกติ
 # เล่นได้ทั้งก่อนเปิด ขณะเปิด และหลังปิด (แต่ก่อนแจ้งผล)
 # ======================================================
 
-# EVEN_ODD_POSTS: เก็บโพสต์คู่/คี่ที่รอจับคู่ (คล้าย POSTS)
-# EVEN_ODD_MATCHES: เก็บคู่ที่จับคู่สำเร็จแล้ว (คล้าย MATCHES)
-
 def parse_even_odd_offer(text: str):
-    """
-    รับคำสั่งโพสต์ คู่/คี่
-    - คู่300 / คู่ 300  -> โพสต์ฝั่งคู่ ยอด 300
-    - คี่300 / คี่ 300  -> โพสต์ฝั่งคี่ ยอด 300
-    """
     clean = compact_play_command_text(text)
     m = re.match(r"^(คู่|คี่)(\d+)$", clean)
     if not m:
         return None
-    side = m.group(1)
     amount = int(m.group(2))
     if amount <= 0:
         return None
-    return {"side": side, "amount": amount}
+    return {"side": m.group(1), "amount": amount}
 
 
 def opposite_even_odd_side(side: str) -> str:
@@ -6584,26 +6575,16 @@ def opposite_even_odd_side(side: str) -> str:
 
 
 def create_even_odd_post(event, side: str, amount: int):
-    """
-    สร้างโพสต์คู่/คี่ รอคนมาติด
-    - เล่นได้ทั้งก่อนเปิด ขณะเปิด และหลังปิด (แต่ก่อนแจ้งผล)
-    - ยังไม่หักเครดิตตอนโพสต์ แค่ตรวจว่าเครดิตพอ
-    - หักเครดิตทั้งสองฝ่ายพร้อมกันตอนจับคู่สำเร็จ (เหมือน ชล/ชถ)
-    - บอทเงียบเมื่อสำเร็จ (เหมือน create_post)
-    return: None = สำเร็จ, str = ข้อความ error
-    """
+    """โพสต์คู่/คี่ — ยังไม่หักเครดิต หักตอนจับคู่สำเร็จ บอทเงียบ"""
     user_id = event.source.user_id
     user = ensure_user_from_event(event)
 
     if not is_front_chat(event):
         return None
-
     if STATE.get("round_id") is None:
         return "ยังไม่มีรอบ ไม่สามารถเล่นคู่/คี่ได้"
-
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่รับโพสต์คู่/คี่เพิ่ม"
-
     if user_credit_amount(user) < amount:
         return insufficient_credit_warning(user, amount, play_text=f"{side}{amount}", action="เล่นคู่/คี่")
 
@@ -6611,7 +6592,6 @@ def create_even_odd_post(event, side: str, amount: int):
     if not post_id:
         return "ระบบไม่พบ message id ของโพสต์นี้"
 
-    # ยังไม่หักเครดิต — หักพร้อมกันตอนจับคู่สำเร็จ เหมือนระบบ ชล/ชถ
     EVEN_ODD_BETS[post_id] = {
         "post_id": post_id,
         "round_id": STATE["round_id"],
@@ -6621,48 +6601,38 @@ def create_even_odd_post(event, side: str, amount: int):
         "maker_id": user_id,
         "maker_name": user.get("line_name") or user.get("name") or fallback_name(user_id),
         "maker_member_no": user.get("member_no"),
-        "side": side,               # "คู่" หรือ "คี่" (ฝั่งโพสต์)
+        "side": side,
         "amount": amount,
         "remaining_amount": amount,
-        "takers": [],               # รายการคนที่มาติด (เหมือน POSTS)
-        "status": "open",           # open / closed / cancelled
+        "takers": [],
+        "status": "open",
         "created_at": now_text(),
     }
-
     save_round_backup_db(reason="even_odd_post")
-    return None  # เงียบ
+    return None
 
 
 def handle_even_odd_confirm(event, quoted_message_id, requested_amount=None):
     """
-    ลูกค้า reply โพสต์คู่/คี่ แล้วพิมพ์ ต/ติด
-    Flow เหมือน handle_confirm ของระบบ ชล/ชถ:
-    1. B reply โพสต์ของ A พิมพ์ ต → บันทึก pending (ยังไม่หักเครดิต)
-    2. A reply ข้อความ ต ของ B พิมพ์ ต → จับคู่สำเร็จ หักเครดิตทั้งสองฝ่ายพร้อมกัน
-    return: None = เงียบ / str = ข้อความ error
+    reply โพสต์คู่/คี่ แล้วพิมพ์ ต/ติด
+    Step1: B reply โพสต์ A → pending (ไม่หัก)
+    Step2: A reply ข้อความ B → จับคู่ หักทั้งคู่พร้อมกัน
+    return None = เงียบ, str = error
     """
     user_id = event.source.user_id
     user = ensure_user_from_event(event)
 
-    if not is_front_chat(event):
+    if not is_front_chat(event) or not quoted_message_id:
         return None
 
-    if not quoted_message_id:
-        return None
-
-    # --- Step 2: เจ้าของโพสต์ reply ข้อความ "ต" ของคนที่มาติด → จับคู่สำเร็จ ---
+    # Step 2: เจ้าของโพสต์ยืนยัน
     taker_pending = None
     maker_post = None
     for post in list(EVEN_ODD_BETS.values()):
-        if post.get("status") != "open":
-            continue
-        if post.get("_type") == "even_odd_match":
+        if post.get("status") != "open" or post.get("_type") == "even_odd_match":
             continue
         for t in post.get("takers", []):
-            if (
-                t.get("taker_reply_message_id") == quoted_message_id
-                and t.get("status") == "pending"
-            ):
+            if t.get("taker_reply_message_id") == quoted_message_id and t.get("status") == "pending":
                 taker_pending = t
                 maker_post = post
                 break
@@ -6672,7 +6642,6 @@ def handle_even_odd_confirm(event, quoted_message_id, requested_amount=None):
     if maker_post and taker_pending:
         if maker_post.get("round_id") != STATE.get("round_id"):
             return "รายการนี้ไม่ใช่รอบปัจจุบัน"
-
         if user_id != maker_post.get("maker_id"):
             return "รายการนี้รอเจ้าของโพสต์ยืนยัน"
 
@@ -6680,36 +6649,27 @@ def handle_even_odd_confirm(event, quoted_message_id, requested_amount=None):
         taker_user = USERS.get(taker_id)
         match_amount = int(taker_pending.get("amount", 0))
 
-        # ตรวจเครดิต maker (ณ ตอนนี้จริง กันเคสเครดิตถูกใช้ไปก่อน)
         if user_credit_amount(user) < match_amount:
             taker_pending["status"] = "rejected_credit"
-            return insufficient_credit_warning(
-                user, match_amount,
-                play_text=f"{maker_post['side']}{match_amount}",
-                action="ยืนยันจับคู่คู่/คี่",
-            )
+            return insufficient_credit_warning(user, match_amount,
+                play_text=f"{maker_post['side']}{match_amount}", action="ยืนยันจับคู่คู่/คี่")
 
-        # ตรวจเครดิต taker (ณ ตอนนี้จริง กันเคสเครดิตถูกใช้ไปก่อน)
         if taker_user and user_credit_amount(taker_user) < match_amount:
             taker_pending["status"] = "rejected_credit"
-            return insufficient_credit_warning(
-                taker_user, match_amount,
-                play_text=f"{opposite_even_odd_side(maker_post['side'])}{match_amount}",
-                action="ยืนยันจับคู่คู่/คี่",
-            )
+            return insufficient_credit_warning(taker_user, match_amount,
+                play_text=f"{opposite_even_odd_side(maker_post['side'])}{match_amount}", action="ยืนยันจับคู่คู่/คี่")
 
-        # หักเครดิตทั้งสองฝ่ายพร้อมกัน (เหมือน ชล/ชถ บรรทัด 9640-9641 ของระบบเดิม)
+        # หักเครดิตทั้งสองฝ่ายพร้อมกัน
         user["credit"] = user_credit_amount(user) - match_amount
         if taker_user:
             taker_user["credit"] = user_credit_amount(taker_user) - match_amount
         save_user_db()
 
-        # ปรับยอด remaining ของโพสต์
         maker_post["remaining_amount"] = int(maker_post.get("remaining_amount", 0)) - match_amount
         if maker_post["remaining_amount"] <= 0:
             maker_post["status"] = "closed"
-
         taker_pending["status"] = "matched"
+
         order_no = get_next_order_no()
         match_id = str(uuid.uuid4())
         maker_side = maker_post["side"]
@@ -6734,81 +6694,57 @@ def handle_even_odd_confirm(event, quoted_message_id, requested_amount=None):
             "matched_at": now_text(),
             "_type": "even_odd_match",
         }
-
         save_round_backup_db(reason="even_odd_matched")
 
-        maker_name = user_display_name(maker_post["maker_id"])
-        taker_name = user_display_name(taker_id)
         camp = maker_post.get("camp_name") or "-"
-        maker_credit = user_credit_amount(user)
-        taker_credit = user_credit_amount(taker_user)
-
-        push_text_async(
-            maker_post["maker_id"],
+        push_text_async(maker_post["maker_id"],
             f"✅ จับคู่คู่/คี่สำเร็จ | Order #{order_no}\n"
             f"ค่าย: {camp}\n"
-            f"คุณเล่น: {maker_side} | คู่: {taker_name} เล่น{taker_side}\n"
-            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {maker_credit:,}"
-        )
-        push_text_async(
-            taker_id,
+            f"คุณเล่น: {maker_side} | คู่: {user_display_name(taker_id)} เล่น{taker_side}\n"
+            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {user_credit_amount(user):,}")
+        push_text_async(taker_id,
             f"✅ จับคู่คู่/คี่สำเร็จ | Order #{order_no}\n"
             f"ค่าย: {camp}\n"
-            f"คุณเล่น: {taker_side} | คู่: {maker_name} เล่น{maker_side}\n"
-            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {taker_credit:,}"
-        )
-        return None  # เงียบ
+            f"คุณเล่น: {taker_side} | คู่: {user_display_name(maker_post['maker_id'])} เล่น{maker_side}\n"
+            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {user_credit_amount(taker_user):,}")
+        return None
 
-    # --- Step 1: B reply โพสต์คู่/คี่ ต้นทาง → บันทึก pending (ยังไม่หักเครดิต บอทเงียบ) ---
+    # Step 1: ติดโพสต์คู่/คี่
     post = EVEN_ODD_BETS.get(quoted_message_id)
     if not post or post.get("_type") == "even_odd_match":
-        return None  # ไม่ใช่โพสต์คู่/คี่
-
+        return None
     if post.get("round_id") != STATE.get("round_id"):
         return None
-
     if post.get("status") != "open":
         return None
-
     if user_id == post.get("maker_id"):
-        return None  # เจ้าของโพสต์ reply ตัวเอง ไม่ต้องทำอะไร
+        return None
 
-    # คำนวณยอดที่จะติด
     taker_amount = requested_amount if requested_amount else int(post.get("remaining_amount", 0))
     if taker_amount <= 0:
         return None
-
     taker_amount = min(taker_amount, int(post.get("remaining_amount", 0)))
 
-    # เช็กเครดิตก่อน (ยังไม่หัก — หักตอนจับคู่สำเร็จ)
     if user_credit_amount(user) < taker_amount:
-        taker_side = opposite_even_odd_side(post["side"])
-        return insufficient_credit_warning(user, taker_amount, play_text=f"{taker_side}{taker_amount}", action="ติดคู่/คี่")
+        return insufficient_credit_warning(user, taker_amount,
+            play_text=f"{opposite_even_odd_side(post['side'])}{taker_amount}", action="ติดคู่/คี่")
 
-    current_msg_id = get_message_id(event)
     post.setdefault("takers", []).append({
         "taker_id": user_id,
         "taker_name": user.get("line_name") or user.get("name") or fallback_name(user_id),
-        "taker_reply_message_id": current_msg_id,
+        "taker_reply_message_id": get_message_id(event),
         "amount": taker_amount,
         "status": "pending",
         "requested_at": now_text(),
     })
-
     save_round_backup_db(reason="even_odd_taker_pending")
-    return None  # เงียบ รอเจ้าของโพสต์ยืนยัน
+    return None
 
 
 def settle_even_odd_bets_for_round(result_value: int, state: dict):
-    """
-    คิดผลรายการคู่/คี่ ทั้งหมดในรอบ
-    - ผลเป็นเลขคู่ → ฝั่งคู่ชนะ, ผลเป็นเลขคี่ → ฝั่งคี่ชนะ
-    - หักค่าคอมมิชชั่น COMMISSION_PERCENT% จากคนชนะ เหมือนระบบปกติ
-    - แจ้งผลทาง DM ทั้งสองฝั่ง
-    """
-    if state is None:
+    """คิดผลคู่/คี่ เมื่อแอดมินแจ้งผลตัวเลข หักค่า% คนชนะ"""
+    if not state:
         return
-
     round_id = state.get("round_id")
     if not round_id:
         return
@@ -6816,15 +6752,10 @@ def settle_even_odd_bets_for_round(result_value: int, state: dict):
     camp_name = state.get("camp_name") or "-"
     result_parity = "คู่" if int(result_value) % 2 == 0 else "คี่"
 
-    target_matches = [
-        b for b in EVEN_ODD_BETS.values()
+    target_matches = [b for b in EVEN_ODD_BETS.values()
         if b.get("round_id") == round_id
         and b.get("status") == "matched"
-        and b.get("_type") == "even_odd_match"
-    ]
-
-    if not target_matches:
-        return
+        and b.get("_type") == "even_odd_match"]
 
     for match in target_matches:
         maker_id = match["maker_id"]
@@ -6835,271 +6766,158 @@ def settle_even_odd_bets_for_round(result_value: int, state: dict):
         maker = USERS.get(maker_id)
         taker = USERS.get(taker_id)
 
-        # ตัดสินผล
-        winning_side = result_parity  # "คู่" หรือ "คี่"
-
-        if winning_side == maker_side:
-            # maker ชนะ
+        if result_parity == maker_side:
             commission = calculate_commission(amount)
             if maker:
                 maker["credit"] = int(maker.get("credit", 0) or 0) + (amount * 2) - commission
-            maker_status = "ชนะ"
-            taker_status = "แพ้"
-            maker_delta = amount - commission
-            taker_delta = -amount
-            winner_id = maker_id
+            maker_status, taker_status = "ชนะ", "แพ้"
+            maker_delta, taker_delta = amount - commission, -amount
             match["commission"] = commission
             match["winner_id"] = maker_id
-        elif winning_side == taker_side:
-            # taker ชนะ
+        elif result_parity == taker_side:
             commission = calculate_commission(amount)
             if taker:
                 taker["credit"] = int(taker.get("credit", 0) or 0) + (amount * 2) - commission
-            maker_status = "แพ้"
-            taker_status = "ชนะ"
-            maker_delta = -amount
-            taker_delta = amount - commission
-            winner_id = taker_id
+            maker_status, taker_status = "แพ้", "ชนะ"
+            maker_delta, taker_delta = -amount, amount - commission
             match["commission"] = commission
             match["winner_id"] = taker_id
         else:
-            # ไม่ควรเกิด แต่ป้องกันไว้ → คืนทุน
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) + amount
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) + amount
-            maker_status = "จาว"
-            taker_status = "จาว"
-            maker_delta = 0
-            taker_delta = 0
-            winner_id = None
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) + amount
+            maker_status = taker_status = "จาว"
+            maker_delta = taker_delta = 0
             match["commission"] = 0
             match["winner_id"] = None
 
         match["status"] = "settled"
         match["result"] = result_value
         match["result_parity"] = result_parity
-        match["winning_side"] = winning_side
+        match["winning_side"] = result_parity
         match["settled_at"] = now_text()
         match["commission_percent"] = COMMISSION_PERCENT
 
-        maker_name = user_display_name(maker_id)
-        taker_name = user_display_name(taker_id)
-
-        # DM maker
-        if maker_status == "ชนะ":
-            maker_emoji = "🎉"
-            maker_result_text = f"ชนะ +{maker_delta:,}"
-        elif maker_status == "แพ้":
-            maker_emoji = "😥"
-            maker_result_text = f"แพ้ -{amount:,}"
-        else:
-            maker_emoji = "➖"
-            maker_result_text = "จาว คืนทุน"
-
-        push_text_async(
-            maker_id,
-            f"{maker_emoji} ผลคู่/คี่ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
-            f"ผล: {result_value} ({result_parity})\n"
-            f"คุณเล่น: {maker_side} vs {taker_name} เล่น{taker_side}\n"
-            f"{maker_result_text} | เครดิตคงเหลือ: {user_credit_amount(maker):,}"
-        )
-
-        # DM taker
-        if taker_status == "ชนะ":
-            taker_emoji = "🎉"
-            taker_result_text = f"ชนะ +{taker_delta:,}"
-        elif taker_status == "แพ้":
-            taker_emoji = "😥"
-            taker_result_text = f"แพ้ -{amount:,}"
-        else:
-            taker_emoji = "➖"
-            taker_result_text = "จาว คืนทุน"
-
-        push_text_async(
-            taker_id,
-            f"{taker_emoji} ผลคู่/คี่ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
-            f"ผล: {result_value} ({result_parity})\n"
-            f"คุณเล่น: {taker_side} vs {maker_name} เล่น{maker_side}\n"
-            f"{taker_result_text} | เครดิตคงเหลือ: {user_credit_amount(taker):,}"
-        )
+        for uid, my_side, my_status, my_delta, other_id, other_side in [
+            (maker_id, maker_side, maker_status, maker_delta, taker_id, taker_side),
+            (taker_id, taker_side, taker_status, taker_delta, maker_id, maker_side),
+        ]:
+            u = USERS.get(uid)
+            emoji = "🎉" if my_status == "ชนะ" else ("😥" if my_status == "แพ้" else "➖")
+            result_text = (f"ชนะ +{abs(my_delta):,}" if my_status == "ชนะ"
+                           else (f"แพ้ -{amount:,}" if my_status == "แพ้" else "จาว คืนทุน"))
+            push_text_async(uid,
+                f"{emoji} ผลคู่/คี่ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
+                f"ผล: {result_value} ({result_parity})\n"
+                f"คุณเล่น: {my_side} | คู่: {user_display_name(other_id)} เล่น{other_side}\n"
+                f"{result_text} | เครดิตคงเหลือ: {user_credit_amount(u):,}")
 
     save_user_db()
     save_round_backup_db(reason="even_odd_settled")
 
 
 def settle_even_odd_bets_all_refund(state: dict):
-    """
-    คืนทุนรายการคู่/คี่ ทั้งหมดในรอบ (กรณี จาวทุกแผล / บั้งไฟหาย)
-    - คืนเครดิต maker ของโพสต์ที่ยังไม่ถูกจับคู่
-    - คืนเครดิตทั้ง maker และ taker ของรายการที่จับคู่แล้ว
-    """
-    if state is None:
+    """คืนทุนคู่/คี่ ทั้งหมด (กรณี จาวทุกแผล / บั้งไฟหาย)"""
+    if not state:
         return
-
     round_id = state.get("round_id")
     if not round_id:
         return
-
     camp_name = state.get("camp_name") or "-"
     now = now_text()
 
-    # คืนทุนโพสต์ที่ยังไม่ถูกจับคู่ (status == "open")
     for post in list(EVEN_ODD_BETS.values()):
-        if post.get("round_id") != round_id:
-            continue
-        if post.get("_type") == "even_odd_match":
+        if post.get("round_id") != round_id or post.get("_type") == "even_odd_match":
             continue
         if post.get("status") not in {"open", "closed"}:
             continue
-
-        maker_id = post.get("maker_id")
-        # คืนเฉพาะยอดที่ยังไม่ถูกจับคู่
         remaining = int(post.get("remaining_amount", 0))
         if remaining > 0:
-            user = USERS.get(maker_id)
-            if user:
-                user["credit"] = int(user.get("credit", 0) or 0) + remaining
-            post["status"] = "refunded"
-            post["settled_at"] = now
-            push_text_async(
-                maker_id,
+            u = USERS.get(post.get("maker_id"))
+            if u:
+                u["credit"] = int(u.get("credit", 0) or 0) + remaining
+            push_text_async(post.get("maker_id"),
                 f"💎 คืนทุนโพสต์คู่/คี่ ค่าย {camp_name}\n"
-                f"เล่น: {post.get('side')} {remaining:,} (ยังไม่มีคู่) | คืนทุนเต็มจำนวน"
-            )
+                f"เล่น: {post.get('side')} {remaining:,} (ไม่มีคู่) | คืนทุนเต็มจำนวน")
+        post["status"] = "refunded"
+        post["settled_at"] = now
 
-    # คืนทุนรายการที่จับคู่แล้ว (matched)
     for match in list(EVEN_ODD_BETS.values()):
-        if match.get("round_id") != round_id:
-            continue
-        if match.get("_type") != "even_odd_match":
+        if match.get("round_id") != round_id or match.get("_type") != "even_odd_match":
             continue
         if match.get("status") != "matched":
             continue
-
-        maker_id = match["maker_id"]
-        taker_id = match["taker_id"]
+        maker_id, taker_id = match["maker_id"], match["taker_id"]
         amount = int(match["amount"])
-        maker = USERS.get(maker_id)
-        taker = USERS.get(taker_id)
-
-        if maker:
-            maker["credit"] = int(maker.get("credit", 0) or 0) + amount
-        if taker:
-            taker["credit"] = int(taker.get("credit", 0) or 0) + amount
-
+        maker, taker = USERS.get(maker_id), USERS.get(taker_id)
+        if maker: maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+        if taker: taker["credit"] = int(taker.get("credit", 0) or 0) + amount
         match["status"] = "refunded"
         match["winning_side"] = "จาว"
         match["commission"] = 0
         match["winner_id"] = None
         match["settled_at"] = now
-
-        push_text_async(
-            maker_id,
+        push_text_async(maker_id,
             f"💎 คืนทุนคู่/คี่ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
-            f"เล่น: {match.get('maker_side')} {amount:,} | คืนทุนเต็มจำนวน"
-        )
-        push_text_async(
-            taker_id,
+            f"เล่น: {match.get('maker_side')} {amount:,} | คืนทุนเต็มจำนวน")
+        push_text_async(taker_id,
             f"💎 คืนทุนคู่/คี่ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
-            f"เล่น: {match.get('taker_side')} {amount:,} | คืนทุนเต็มจำนวน"
-        )
+            f"เล่น: {match.get('taker_side')} {amount:,} | คืนทุนเต็มจำนวน")
 
     save_user_db()
 
 
 def rollback_even_odd_bets_for_round(round_id: str, rollback_by: str = "-"):
-    """
-    ย้อนผลรายการคู่/คี่: ดึง payout ที่จ่ายไปคืน เปลี่ยน status กลับเป็น matched
-    """
+    """ย้อนผลคู่/คี่: ดึง payout คืน เปลี่ยน status กลับเป็น matched"""
     if not round_id:
         return
-
-    target_matches = [
-        b for b in EVEN_ODD_BETS.values()
-        if b.get("round_id") == round_id
-        and b.get("status") == "settled"
-        and b.get("_type") == "even_odd_match"
-    ]
-
-    if not target_matches:
-        return
-
+    target = [b for b in EVEN_ODD_BETS.values()
+              if b.get("round_id") == round_id
+              and b.get("status") == "settled"
+              and b.get("_type") == "even_odd_match"]
     rollback_at = now_text()
-    for match in target_matches:
-        maker_id = match["maker_id"]
-        taker_id = match["taker_id"]
+    for match in target:
+        maker_id, taker_id = match["maker_id"], match["taker_id"]
         amount = int(match["amount"])
         winning_side = match.get("winning_side")
         maker_side = match.get("maker_side")
-        maker = USERS.get(maker_id)
-        taker = USERS.get(taker_id)
-
+        maker, taker = USERS.get(maker_id), USERS.get(taker_id)
+        commission = int(match.get("commission", 0))
         if winning_side == "จาว":
-            # คืนจาว: ดึงเครดิตที่คืนไปกลับ
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) - amount
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) - amount
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) - amount
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) - amount
         elif winning_side == maker_side:
-            # maker ชนะ: ดึง payout = 2×amount - commission กลับจาก maker
-            commission = int(match.get("commission", 0))
-            payout = (amount * 2) - commission
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) - payout
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) - ((amount * 2) - commission)
         else:
-            # taker ชนะ: ดึง payout กลับจาก taker
-            commission = int(match.get("commission", 0))
-            payout = (amount * 2) - commission
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) - payout
-
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) - ((amount * 2) - commission)
         match["status"] = "matched"
         for key in ["result", "result_parity", "winning_side", "commission",
                     "winner_id", "commission_percent", "settled_at"]:
             match.pop(key, None)
         match["rolled_back_at"] = rollback_at
         match["rolled_back_by"] = rollback_by or "-"
-
     save_user_db()
 
 
 # ======================================================
 # ลำ/บ่ลำ Matching System
-# ระบบจับคู่ ลำ vs บ่ลำ เหมือนระบบ ชล/ชถ
-# ต่างจาก คู่/คี่ ตรงที่:
-# - เล่นได้เฉพาะขณะเปิดรอบ (opened = True) เท่านั้น
-# - แจ้งผลแยก ด้วยคำสั่ง "สรุปผล ลำ" หรือ "สรุปผล บ่ลำ" (ไม่ผูกกับตัวเลขผลปกติ)
-# LAM_BETS: เก็บทั้งโพสต์และ match ในที่เดียว แยกด้วย _type
+# Flow: ลำ300 / บ่ลำ300 → reply ต → จับคู่ → สรุปผล ลำ / สรุปผล บ่ลำ
+# เล่นได้เฉพาะขณะเปิดรอบ (opened = True) เท่านั้น
+# แจ้งผลแยกจากระบบปกติ ด้วยคำสั่ง สรุปผล ลำ / สรุปผล บ่ลำ
 # ======================================================
 
-LAM_BETS = {}
-
-
 def parse_lam_offer(text: str):
-    """
-    รับคำสั่งโพสต์ ลำ/บ่ลำ
-    - ลำ300 / ลำ 300   -> โพสต์ฝั่งลำ ยอด 300
-    - บ่ลำ300 / บ่ลำ 300 -> โพสต์ฝั่งบ่ลำ ยอด 300
-    """
     clean = compact_play_command_text(text)
     m = re.match(r"^(บ่ลำ|ลำ)(\d+)$", clean)
     if not m:
         return None
-    side = m.group(1)   # "ลำ" หรือ "บ่ลำ"
     amount = int(m.group(2))
     if amount <= 0:
         return None
-    return {"side": side, "amount": amount}
+    return {"side": m.group(1), "amount": amount}
 
 
 def parse_lam_result_command(text: str):
-    """
-    คำสั่งแอดมินสรุปผลลำ/บ่ลำ
-    - สรุปผล ลำ    -> ฝั่งลำชนะ
-    - สรุปผล บ่ลำ  -> ฝั่งบ่ลำชนะ
-    return: "ลำ" / "บ่ลำ" / None
-    """
+    """สรุปผล ลำ / สรุปผล บ่ลำ → return "ลำ" / "บ่ลำ" / None"""
     raw = re.sub(r"\s+", " ", (text or "").strip())
     m = re.match(r"^สรุปผล\s+(ลำ|บ่ลำ)$", raw)
     if not m:
@@ -7112,28 +6930,18 @@ def opposite_lam_side(side: str) -> str:
 
 
 def create_lam_post(event, side: str, amount: int):
-    """
-    สร้างโพสต์ลำ/บ่ลำ รอคนมาติด
-    - เล่นได้เฉพาะขณะเปิดรอบ (opened = True) เท่านั้น
-    - ยังไม่หักเครดิตตอนโพสต์ หักตอนจับคู่สำเร็จ (เหมือน ชล/ชถ)
-    - บอทเงียบเมื่อสำเร็จ
-    return: None = สำเร็จ, str = ข้อความ error
-    """
+    """โพสต์ลำ/บ่ลำ — เฉพาะขณะเปิดรอบ ยังไม่หักเครดิต บอทเงียบ"""
     user_id = event.source.user_id
     user = ensure_user_from_event(event)
 
     if not is_front_chat(event):
         return None
-
     if STATE.get("round_id") is None:
         return "ยังไม่มีรอบ ไม่สามารถเล่นลำ/บ่ลำได้"
-
     if not STATE.get("opened"):
         return "ปิดรอบแล้ว ไม่รับโพสต์ลำ/บ่ลำ (เล่นได้เฉพาะขณะเปิดรอบเท่านั้น)"
-
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่รับโพสต์ลำ/บ่ลำ"
-
     if user_credit_amount(user) < amount:
         return insufficient_credit_warning(user, amount, play_text=f"{side}{amount}", action="เล่นลำ/บ่ลำ")
 
@@ -7141,7 +6949,6 @@ def create_lam_post(event, side: str, amount: int):
     if not post_id:
         return "ระบบไม่พบ message id ของโพสต์นี้"
 
-    # ยังไม่หักเครดิต — หักพร้อมกันตอนจับคู่สำเร็จ เหมือนระบบ ชล/ชถ
     LAM_BETS[post_id] = {
         "post_id": post_id,
         "round_id": STATE["round_id"],
@@ -7151,48 +6958,38 @@ def create_lam_post(event, side: str, amount: int):
         "maker_id": user_id,
         "maker_name": user.get("line_name") or user.get("name") or fallback_name(user_id),
         "maker_member_no": user.get("member_no"),
-        "side": side,               # "ลำ" หรือ "บ่ลำ"
+        "side": side,
         "amount": amount,
         "remaining_amount": amount,
         "takers": [],
-        "status": "open",           # open / closed / cancelled
+        "status": "open",
         "created_at": now_text(),
     }
-
     save_round_backup_db(reason="lam_post")
-    return None  # เงียบ
+    return None
 
 
 def handle_lam_confirm(event, quoted_message_id, requested_amount=None):
     """
-    ลูกค้า reply โพสต์ลำ/บ่ลำ แล้วพิมพ์ ต/ติด
-    Flow เหมือน handle_confirm ของระบบ ชล/ชถ:
-    1. B reply โพสต์ของ A พิมพ์ ต → บันทึก pending (ยังไม่หักเครดิต)
-    2. A reply ข้อความ ต ของ B พิมพ์ ต → จับคู่สำเร็จ หักเครดิตทั้งสองฝ่าย
-    return: None = เงียบ / str = ข้อความ error
+    reply โพสต์ลำ/บ่ลำ แล้วพิมพ์ ต/ติด
+    Step1: B reply โพสต์ A → pending (ไม่หัก)
+    Step2: A reply ข้อความ B → จับคู่ หักทั้งคู่พร้อมกัน
+    return None = เงียบ, str = error
     """
     user_id = event.source.user_id
     user = ensure_user_from_event(event)
 
-    if not is_front_chat(event):
+    if not is_front_chat(event) or not quoted_message_id:
         return None
 
-    if not quoted_message_id:
-        return None
-
-    # --- Step 2: เจ้าของโพสต์ reply ข้อความ "ต" ของคนที่มาติด → จับคู่สำเร็จ ---
+    # Step 2: เจ้าของโพสต์ยืนยัน
     taker_pending = None
     maker_post = None
     for post in list(LAM_BETS.values()):
-        if post.get("status") != "open":
-            continue
-        if post.get("_type") == "lam_match":
+        if post.get("status") != "open" or post.get("_type") == "lam_match":
             continue
         for t in post.get("takers", []):
-            if (
-                t.get("taker_reply_message_id") == quoted_message_id
-                and t.get("status") == "pending"
-            ):
+            if t.get("taker_reply_message_id") == quoted_message_id and t.get("status") == "pending":
                 taker_pending = t
                 maker_post = post
                 break
@@ -7202,7 +6999,6 @@ def handle_lam_confirm(event, quoted_message_id, requested_amount=None):
     if maker_post and taker_pending:
         if maker_post.get("round_id") != STATE.get("round_id"):
             return "รายการนี้ไม่ใช่รอบปัจจุบัน"
-
         if user_id != maker_post.get("maker_id"):
             return "รายการนี้รอเจ้าของโพสต์ยืนยัน"
 
@@ -7210,36 +7006,25 @@ def handle_lam_confirm(event, quoted_message_id, requested_amount=None):
         taker_user = USERS.get(taker_id)
         match_amount = int(taker_pending.get("amount", 0))
 
-        # ตรวจเครดิต maker ณ ตอนนี้
         if user_credit_amount(user) < match_amount:
             taker_pending["status"] = "rejected_credit"
-            return insufficient_credit_warning(
-                user, match_amount,
-                play_text=f"{maker_post['side']}{match_amount}",
-                action="ยืนยันจับคู่ลำ/บ่ลำ",
-            )
-
-        # ตรวจเครดิต taker ณ ตอนนี้
+            return insufficient_credit_warning(user, match_amount,
+                play_text=f"{maker_post['side']}{match_amount}", action="ยืนยันจับคู่ลำ/บ่ลำ")
         if taker_user and user_credit_amount(taker_user) < match_amount:
             taker_pending["status"] = "rejected_credit"
-            return insufficient_credit_warning(
-                taker_user, match_amount,
-                play_text=f"{opposite_lam_side(maker_post['side'])}{match_amount}",
-                action="ยืนยันจับคู่ลำ/บ่ลำ",
-            )
+            return insufficient_credit_warning(taker_user, match_amount,
+                play_text=f"{opposite_lam_side(maker_post['side'])}{match_amount}", action="ยืนยันจับคู่ลำ/บ่ลำ")
 
-        # หักเครดิตทั้งสองฝ่ายพร้อมกัน
         user["credit"] = user_credit_amount(user) - match_amount
         if taker_user:
             taker_user["credit"] = user_credit_amount(taker_user) - match_amount
         save_user_db()
 
-        # ปรับยอด remaining
         maker_post["remaining_amount"] = int(maker_post.get("remaining_amount", 0)) - match_amount
         if maker_post["remaining_amount"] <= 0:
             maker_post["status"] = "closed"
-
         taker_pending["status"] = "matched"
+
         order_no = get_next_order_no()
         match_id = str(uuid.uuid4())
         maker_side = maker_post["side"]
@@ -7264,42 +7049,29 @@ def handle_lam_confirm(event, quoted_message_id, requested_amount=None):
             "matched_at": now_text(),
             "_type": "lam_match",
         }
-
         save_round_backup_db(reason="lam_matched")
 
-        maker_name = user_display_name(maker_post["maker_id"])
-        taker_name = user_display_name(taker_id)
         camp = maker_post.get("camp_name") or "-"
-        maker_credit = user_credit_amount(user)
-        taker_credit = user_credit_amount(taker_user)
-
-        push_text_async(
-            maker_post["maker_id"],
+        push_text_async(maker_post["maker_id"],
             f"✅ จับคู่ลำ/บ่ลำสำเร็จ | Order #{order_no}\n"
             f"ค่าย: {camp}\n"
-            f"คุณเล่น: {maker_side} | คู่: {taker_name} เล่น{taker_side}\n"
-            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {maker_credit:,}"
-        )
-        push_text_async(
-            taker_id,
+            f"คุณเล่น: {maker_side} | คู่: {user_display_name(taker_id)} เล่น{taker_side}\n"
+            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {user_credit_amount(user):,}")
+        push_text_async(taker_id,
             f"✅ จับคู่ลำ/บ่ลำสำเร็จ | Order #{order_no}\n"
             f"ค่าย: {camp}\n"
-            f"คุณเล่น: {taker_side} | คู่: {maker_name} เล่น{maker_side}\n"
-            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {taker_credit:,}"
-        )
-        return None  # เงียบ
+            f"คุณเล่น: {taker_side} | คู่: {user_display_name(maker_post['maker_id'])} เล่น{maker_side}\n"
+            f"ยอด: {match_amount:,} | เครดิตคงเหลือ: {user_credit_amount(taker_user):,}")
+        return None
 
-    # --- Step 1: B reply โพสต์ลำ/บ่ลำ ต้นทาง → บันทึก pending (ยังไม่หักเครดิต บอทเงียบ) ---
+    # Step 1: ติดโพสต์ลำ/บ่ลำ
     post = LAM_BETS.get(quoted_message_id)
     if not post or post.get("_type") == "lam_match":
         return None
-
     if post.get("round_id") != STATE.get("round_id"):
         return None
-
     if post.get("status") != "open":
         return None
-
     if user_id == post.get("maker_id"):
         return None
 
@@ -7309,85 +7081,63 @@ def handle_lam_confirm(event, quoted_message_id, requested_amount=None):
     taker_amount = min(taker_amount, int(post.get("remaining_amount", 0)))
 
     if user_credit_amount(user) < taker_amount:
-        taker_side = opposite_lam_side(post["side"])
-        return insufficient_credit_warning(user, taker_amount, play_text=f"{taker_side}{taker_amount}", action="ติดลำ/บ่ลำ")
+        return insufficient_credit_warning(user, taker_amount,
+            play_text=f"{opposite_lam_side(post['side'])}{taker_amount}", action="ติดลำ/บ่ลำ")
 
-    current_msg_id = get_message_id(event)
     post.setdefault("takers", []).append({
         "taker_id": user_id,
         "taker_name": user.get("line_name") or user.get("name") or fallback_name(user_id),
-        "taker_reply_message_id": current_msg_id,
+        "taker_reply_message_id": get_message_id(event),
         "amount": taker_amount,
         "status": "pending",
         "requested_at": now_text(),
     })
-
     save_round_backup_db(reason="lam_taker_pending")
-    return None  # เงียบ
+    return None
 
 
 def settle_lam_bets_for_round(winning_side: str, state: dict):
-    """
-    คิดผลรายการลำ/บ่ลำ ทั้งหมดในรอบ
-    - winning_side: "ลำ" หรือ "บ่ลำ" (จากคำสั่ง สรุปผล ลำ / สรุปผล บ่ลำ)
-    - หักค่าคอมมิชชั่น COMMISSION_PERCENT% จากคนชนะ เหมือนระบบปกติ
-    - แจ้งผลทาง DM ทั้งสองฝั่ง
-    return: ข้อความสรุปสำหรับตอบในกลุ่ม
-    """
-    if state is None:
+    """คิดผลลำ/บ่ลำ ทั้งหมดในรอบ หักค่า% คนชนะ คืนทุนโพสต์ที่ไม่มีคู่"""
+    if not state:
         return "ไม่พบข้อมูลรอบ"
-
     round_id = state.get("round_id")
     if not round_id:
         return "ยังไม่มีรอบ"
-
     camp_name = state.get("camp_name") or "-"
-
-    target_matches = [
-        b for b in LAM_BETS.values()
-        if b.get("round_id") == round_id
-        and b.get("status") == "matched"
-        and b.get("_type") == "lam_match"
-    ]
-
+    now = now_text()
     settled_count = 0
     round_commission = 0
 
+    target_matches = [b for b in LAM_BETS.values()
+        if b.get("round_id") == round_id
+        and b.get("status") == "matched"
+        and b.get("_type") == "lam_match"]
+
     for match in target_matches:
-        maker_id = match["maker_id"]
-        taker_id = match["taker_id"]
+        maker_id, taker_id = match["maker_id"], match["taker_id"]
         amount = int(match["amount"])
-        maker_side = match["maker_side"]
-        taker_side = match["taker_side"]
-        maker = USERS.get(maker_id)
-        taker = USERS.get(taker_id)
+        maker_side, taker_side = match["maker_side"], match["taker_side"]
+        maker, taker = USERS.get(maker_id), USERS.get(taker_id)
 
         if winning_side == maker_side:
             commission = calculate_commission(amount)
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) + (amount * 2) - commission
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) + (amount * 2) - commission
             maker_status, taker_status = "ชนะ", "แพ้"
-            maker_delta = amount - commission
-            taker_delta = -amount
+            maker_delta, taker_delta = amount - commission, -amount
             match["commission"] = commission
             match["winner_id"] = maker_id
             round_commission += commission
         elif winning_side == taker_side:
             commission = calculate_commission(amount)
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) + (amount * 2) - commission
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) + (amount * 2) - commission
             maker_status, taker_status = "แพ้", "ชนะ"
-            maker_delta = -amount
-            taker_delta = amount - commission
+            maker_delta, taker_delta = -amount, amount - commission
             match["commission"] = commission
             match["winner_id"] = taker_id
             round_commission += commission
         else:
-            # กรณีผิดปกติ → คืนทุน
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) + amount
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) + amount
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) + amount
             maker_status = taker_status = "จาว"
             maker_delta = taker_delta = 0
             match["commission"] = 0
@@ -7396,59 +7146,41 @@ def settle_lam_bets_for_round(winning_side: str, state: dict):
         match["status"] = "settled"
         match["result"] = winning_side
         match["winning_side"] = winning_side
-        match["settled_at"] = now_text()
+        match["settled_at"] = now
         match["commission_percent"] = COMMISSION_PERCENT
         settled_count += 1
 
-        maker_name = user_display_name(maker_id)
-        taker_name = user_display_name(taker_id)
-
-        for uid, my_side, my_status, my_delta, other_name, other_side in [
-            (maker_id, maker_side, maker_status, maker_delta, taker_name, taker_side),
-            (taker_id, taker_side, taker_status, taker_delta, maker_name, maker_side),
+        for uid, my_side, my_status, my_delta, other_id, other_side in [
+            (maker_id, maker_side, maker_status, maker_delta, taker_id, taker_side),
+            (taker_id, taker_side, taker_status, taker_delta, maker_id, maker_side),
         ]:
             u = USERS.get(uid)
-            if my_status == "ชนะ":
-                emoji = "🎉"
-                result_text = f"ชนะ +{abs(my_delta):,}"
-            elif my_status == "แพ้":
-                emoji = "😥"
-                result_text = f"แพ้ -{amount:,}"
-            else:
-                emoji = "➖"
-                result_text = "จาว คืนทุน"
-
-            push_text_async(
-                uid,
+            emoji = "🎉" if my_status == "ชนะ" else ("😥" if my_status == "แพ้" else "➖")
+            result_text = (f"ชนะ +{abs(my_delta):,}" if my_status == "ชนะ"
+                           else (f"แพ้ -{amount:,}" if my_status == "แพ้" else "จาว คืนทุน"))
+            push_text_async(uid,
                 f"{emoji} ผลลำ/บ่ลำ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
                 f"ผล: {winning_side}\n"
-                f"คุณเล่น: {my_side} | คู่: {other_name} เล่น{other_side}\n"
-                f"{result_text} | เครดิตคงเหลือ: {user_credit_amount(u):,}"
-            )
+                f"คุณเล่น: {my_side} | คู่: {user_display_name(other_id)} เล่น{other_side}\n"
+                f"{result_text} | เครดิตคงเหลือ: {user_credit_amount(u):,}")
 
-    # ยกเลิกโพสต์ที่ยังไม่ถูกจับคู่ (remaining > 0) และคืนเครดิตให้ maker
+    # คืนทุนโพสต์ที่ยังไม่ถูกจับคู่
     cancelled_posts = 0
     for post in list(LAM_BETS.values()):
-        if post.get("round_id") != round_id:
-            continue
-        if post.get("_type") == "lam_match":
+        if post.get("round_id") != round_id or post.get("_type") == "lam_match":
             continue
         if post.get("status") not in {"open", "closed"}:
             continue
         remaining = int(post.get("remaining_amount", 0))
         if remaining > 0:
-            maker_id = post.get("maker_id")
-            u = USERS.get(maker_id)
-            if u:
-                u["credit"] = int(u.get("credit", 0) or 0) + remaining
-            push_text_async(
-                maker_id,
+            u = USERS.get(post.get("maker_id"))
+            if u: u["credit"] = int(u.get("credit", 0) or 0) + remaining
+            push_text_async(post.get("maker_id"),
                 f"💎 คืนทุนโพสต์ลำ/บ่ลำ ค่าย {camp_name}\n"
-                f"เล่น: {post.get('side')} {remaining:,} (ยังไม่มีคู่) | คืนทุนเต็มจำนวน"
-            )
+                f"เล่น: {post.get('side')} {remaining:,} (ไม่มีคู่) | คืนทุนเต็มจำนวน")
             cancelled_posts += 1
         post["status"] = "settled_no_match"
-        post["settled_at"] = now_text()
+        post["settled_at"] = now
 
     save_user_db()
     save_round_backup_db(reason="lam_settled")
@@ -7458,174 +7190,118 @@ def settle_lam_bets_for_round(winning_side: str, state: dict):
         f"ผล: {winning_side}",
         f"บิลที่คิดผล: {settled_count}",
     ]
-    if cancelled_posts > 0:
+    if cancelled_posts:
         lines.append(f"โพสต์ที่คืนทุน (ไม่มีคู่): {cancelled_posts}")
-    if round_commission > 0:
+    if round_commission:
         lines.append(f"ค่าคอมมิชชั่นรวม: {round_commission:,}")
     return "\n".join(lines)
 
 
 def settle_lam_bets_all_refund(state: dict):
-    """
-    คืนทุนรายการลำ/บ่ลำ ทั้งหมดในรอบ (กรณี จาวทุกแผล / บั้งไฟหาย)
-    """
-    if state is None:
+    """คืนทุนลำ/บ่ลำ ทั้งหมด (กรณี จาวทุกแผล / บั้งไฟหาย)"""
+    if not state:
         return
     round_id = state.get("round_id")
     if not round_id:
         return
-
     camp_name = state.get("camp_name") or "-"
     now = now_text()
 
-    # คืนทุนโพสต์ที่ยังไม่ถูกจับคู่
     for post in list(LAM_BETS.values()):
-        if post.get("round_id") != round_id:
-            continue
-        if post.get("_type") == "lam_match":
+        if post.get("round_id") != round_id or post.get("_type") == "lam_match":
             continue
         if post.get("status") not in {"open", "closed"}:
             continue
         remaining = int(post.get("remaining_amount", 0))
         if remaining > 0:
             u = USERS.get(post.get("maker_id"))
-            if u:
-                u["credit"] = int(u.get("credit", 0) or 0) + remaining
-            push_text_async(
-                post.get("maker_id"),
+            if u: u["credit"] = int(u.get("credit", 0) or 0) + remaining
+            push_text_async(post.get("maker_id"),
                 f"💎 คืนทุนโพสต์ลำ/บ่ลำ ค่าย {camp_name}\n"
-                f"เล่น: {post.get('side')} {remaining:,} | คืนทุนเต็มจำนวน"
-            )
+                f"เล่น: {post.get('side')} {remaining:,} | คืนทุนเต็มจำนวน")
         post["status"] = "refunded"
         post["settled_at"] = now
 
-    # คืนทุนรายการที่จับคู่แล้ว
     for match in list(LAM_BETS.values()):
-        if match.get("round_id") != round_id:
-            continue
-        if match.get("_type") != "lam_match":
+        if match.get("round_id") != round_id or match.get("_type") != "lam_match":
             continue
         if match.get("status") != "matched":
             continue
-
-        maker_id = match["maker_id"]
-        taker_id = match["taker_id"]
+        maker_id, taker_id = match["maker_id"], match["taker_id"]
         amount = int(match["amount"])
-        maker = USERS.get(maker_id)
-        taker = USERS.get(taker_id)
-
-        if maker:
-            maker["credit"] = int(maker.get("credit", 0) or 0) + amount
-        if taker:
-            taker["credit"] = int(taker.get("credit", 0) or 0) + amount
-
+        maker, taker = USERS.get(maker_id), USERS.get(taker_id)
+        if maker: maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+        if taker: taker["credit"] = int(taker.get("credit", 0) or 0) + amount
         match["status"] = "refunded"
         match["winning_side"] = "จาว"
         match["commission"] = 0
         match["winner_id"] = None
         match["settled_at"] = now
-
-        push_text_async(
-            maker_id,
+        push_text_async(maker_id,
             f"💎 คืนทุนลำ/บ่ลำ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
-            f"เล่น: {match.get('maker_side')} {amount:,} | คืนทุนเต็มจำนวน"
-        )
-        push_text_async(
-            taker_id,
+            f"เล่น: {match.get('maker_side')} {amount:,} | คืนทุนเต็มจำนวน")
+        push_text_async(taker_id,
             f"💎 คืนทุนลำ/บ่ลำ ค่าย {camp_name} | Order #{match.get('order_no', '-')}\n"
-            f"เล่น: {match.get('taker_side')} {amount:,} | คืนทุนเต็มจำนวน"
-        )
+            f"เล่น: {match.get('taker_side')} {amount:,} | คืนทุนเต็มจำนวน")
 
     save_user_db()
 
 
 def rollback_lam_bets_for_round(round_id: str, rollback_by: str = "-"):
-    """
-    ย้อนผลรายการลำ/บ่ลำ: ดึง payout ที่จ่ายไปคืน เปลี่ยน status กลับเป็น matched
-    """
+    """ย้อนผลลำ/บ่ลำ: ดึง payout คืน เปลี่ยน status กลับเป็น matched"""
     if not round_id:
         return
-
-    target_matches = [
-        b for b in LAM_BETS.values()
-        if b.get("round_id") == round_id
-        and b.get("status") == "settled"
-        and b.get("_type") == "lam_match"
-    ]
-
-    if not target_matches:
-        return
-
+    target = [b for b in LAM_BETS.values()
+              if b.get("round_id") == round_id
+              and b.get("status") == "settled"
+              and b.get("_type") == "lam_match"]
     rollback_at = now_text()
-    for match in target_matches:
-        maker_id = match["maker_id"]
-        taker_id = match["taker_id"]
+    for match in target:
+        maker_id, taker_id = match["maker_id"], match["taker_id"]
         amount = int(match["amount"])
         winning_side = match.get("winning_side")
         maker_side = match.get("maker_side")
-        maker = USERS.get(maker_id)
-        taker = USERS.get(taker_id)
-
+        maker, taker = USERS.get(maker_id), USERS.get(taker_id)
+        commission = int(match.get("commission", 0))
         if winning_side == "จาว":
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) - amount
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) - amount
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) - amount
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) - amount
         elif winning_side == maker_side:
-            commission = int(match.get("commission", 0))
-            payout = (amount * 2) - commission
-            if maker:
-                maker["credit"] = int(maker.get("credit", 0) or 0) - payout
+            if maker: maker["credit"] = int(maker.get("credit", 0) or 0) - ((amount * 2) - commission)
         else:
-            commission = int(match.get("commission", 0))
-            payout = (amount * 2) - commission
-            if taker:
-                taker["credit"] = int(taker.get("credit", 0) or 0) - payout
-
+            if taker: taker["credit"] = int(taker.get("credit", 0) or 0) - ((amount * 2) - commission)
         match["status"] = "matched"
         for key in ["result", "winning_side", "commission", "winner_id",
                     "commission_percent", "settled_at"]:
             match.pop(key, None)
         match["rolled_back_at"] = rollback_at
         match["rolled_back_by"] = rollback_by or "-"
-
     save_user_db()
 
 
 def handle_lam_result_command(event, winning_side: str):
-    """
-    แอดมินพิมพ์ สรุปผล ลำ / สรุปผล บ่ลำ
-    - ตรวจสิทธิ์แอดมิน
-    - ต้องมีรอบ (settled ยังไม่ต้องเป็น True เพราะผลลำแยกจากผลตัวเลข)
-    - เรียก settle_lam_bets_for_round แล้วตอบกลุ่ม
-    """
+    """แอดมินพิมพ์ สรุปผล ลำ / สรุปผล บ่ลำ"""
     if not is_admin(event.source.user_id):
         return "คำสั่งนี้ใช้ได้เฉพาะแอดมิน"
-
     if not is_front_chat(event):
         return "คำสั่งนี้ใช้ได้เฉพาะในกลุ่มหน้าบ้าน"
-
     if STATE.get("round_id") is None:
         return "ยังไม่มีรอบ"
-
-    # ตรวจว่ามีบิลลำ/บ่ลำรอผลไหม
     round_id = STATE.get("round_id")
-    pending_matches = [
-        b for b in LAM_BETS.values()
+    pending_matches = [b for b in LAM_BETS.values()
         if b.get("round_id") == round_id
         and b.get("status") == "matched"
-        and b.get("_type") == "lam_match"
-    ]
-    open_posts = [
-        b for b in LAM_BETS.values()
+        and b.get("_type") == "lam_match"]
+    open_posts = [b for b in LAM_BETS.values()
         if b.get("round_id") == round_id
         and b.get("status") in {"open", "closed"}
-        and b.get("_type") != "lam_match"
-    ]
+        and b.get("_type") != "lam_match"]
     if not pending_matches and not open_posts:
         return "ไม่มีรายการลำ/บ่ลำในรอบนี้"
-
     return settle_lam_bets_for_round(winning_side, STATE)
+
+
+def parse_reset_order_command(text):
     """
     คำสั่งล้าง/รีเซ็ตออเดอร์
     - ล้างออเดอร์ / รีเซ็ตออเดอร์ / รีเซ็ต ID ออเดอร์ = ล้างรายการออเดอร์ทั้งหมด และเริ่มนับใหม่ที่ #1
@@ -10678,7 +10354,7 @@ def settle_round(result_value: int):
 
     save_user_db()
 
-    # คิดผลรายการเดา คู่/คี่ ในรอบนี้ด้วย
+    # คิดผลคู่/คี่ ในรอบนี้ด้วย
     settle_even_odd_bets_for_round(result_value, STATE)
 
     # ส่ง Flex สรุปผลแบบ async เพื่อลดอาการหน่วง
@@ -10782,10 +10458,8 @@ def settle_round_all_jow(reason: str):
 
     save_user_db()
 
-    # คืนทุนรายการเดา คู่/คี่ ในรอบนี้ด้วย
+    # คืนทุนคู่/คี่ และลำ/บ่ลำ ในรอบนี้ด้วย
     settle_even_odd_bets_all_refund(STATE)
-
-    # คืนทุนรายการลำ/บ่ลำ ในรอบนี้ด้วย
     settle_lam_bets_all_refund(STATE)
 
     for uid, rows in user_rows.items():
@@ -11046,10 +10720,8 @@ def rollback_round_result(rollback_by: str = "-"):
 
     removed_profit, removed_profit_records = rollback_profit_for_round(current_round_id, rollback_by=rollback_by)
 
-    # ย้อนผลรายการเดา คู่/คี่ ของรอบนี้ด้วย
+    # ย้อนผลคู่/คี่ และลำ/บ่ลำ ของรอบนี้ด้วย
     rollback_even_odd_bets_for_round(current_round_id, rollback_by=rollback_by)
-
-    # ย้อนผลรายการลำ/บ่ลำ ของรอบนี้ด้วย
     rollback_lam_bets_for_round(current_round_id, rollback_by=rollback_by)
 
     STATE["result"] = None
@@ -13610,15 +13282,13 @@ def handle_message(event):
             )
             return
 
-        # ตรวจว่ามีบิลลำ/บ่ลำที่ยังไม่สรุปผลค้างอยู่ในรอบปัจจุบันไหม
+        # กันเปิดรอบใหม่ถ้ายังมีบิลลำ/บ่ลำที่ยังไม่สรุปค้างอยู่
         current_round_id = STATE.get("round_id")
         if current_round_id:
-            unsettled_lam = [
-                b for b in LAM_BETS.values()
+            unsettled_lam = [b for b in LAM_BETS.values()
                 if b.get("round_id") == current_round_id
                 and b.get("_type") == "lam_match"
-                and b.get("status") == "matched"
-            ]
+                and b.get("status") == "matched"]
             if unsettled_lam:
                 camp = STATE.get("camp_name") or "-"
                 reply_text(
@@ -13972,8 +13642,7 @@ def handle_message(event):
             reply_problem(event, msg)
         return
 
-    # ลูกค้าโพสต์คู่/คี่ เช่น คู่300 / คี่500
-    # เล่นได้ทั้งก่อนเปิด ขณะเปิด และหลังปิด (แต่ก่อนแจ้งผล)
+    # โพสต์คู่/คี่ เช่น คู่300 / คี่500 (ก่อนเปิด/ขณะเปิด/หลังปิด แต่ก่อนแจ้งผล)
     even_odd = parse_even_odd_offer(text)
     if even_odd:
         with STATE_LOCK:
@@ -13982,8 +13651,7 @@ def handle_message(event):
             reply_problem(event, msg)
         return
 
-    # ลูกค้าโพสต์ลำ/บ่ลำ เช่น ลำ300 / บ่ลำ500
-    # เล่นได้เฉพาะขณะเปิดรอบเท่านั้น
+    # โพสต์ลำ/บ่ลำ เช่น ลำ300 / บ่ลำ500 (เฉพาะขณะเปิดรอบ)
     lam = parse_lam_offer(text)
     if lam:
         with STATE_LOCK:
@@ -13992,7 +13660,7 @@ def handle_message(event):
             reply_problem(event, msg)
         return
 
-    # แอดมินสรุปผลลำ/บ่ลำ
+    # แอดมินสรุปผลลำ/บ่ลำ (แยกจาก แจ้งผล ปกติ)
     lam_result = parse_lam_result_command(text)
     if lam_result:
         with STATE_LOCK:
@@ -14006,20 +13674,20 @@ def handle_message(event):
     if confirm_cmd:
         quoted_message_id = get_reply_message_id(event)
 
-        # ตรวจก่อนว่าเป็นการติดโพสต์คู่/คี่หรือเปล่า
+        # ตรวจว่าเป็นการติดโพสต์คู่/คี่ก่อน
         with STATE_LOCK:
-            even_odd_result = handle_even_odd_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
-        if even_odd_result is not None:
-            reply_problem(event, even_odd_result)
+            eo_result = handle_even_odd_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
+        if eo_result is not None:
+            reply_problem(event, eo_result)
             return
         if quoted_message_id and quoted_message_id in EVEN_ODD_BETS:
             return
 
-        # ตรวจว่าเป็นการติดโพสต์ลำ/บ่ลำหรือเปล่า
+        # ตรวจว่าเป็นการติดโพสต์ลำ/บ่ลำก่อน
         with STATE_LOCK:
-            lam_confirm_result = handle_lam_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
-        if lam_confirm_result is not None:
-            reply_problem(event, lam_confirm_result)
+            lam_result2 = handle_lam_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
+        if lam_result2 is not None:
+            reply_problem(event, lam_result2)
             return
         if quoted_message_id and quoted_message_id in LAM_BETS:
             return
