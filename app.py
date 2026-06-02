@@ -6290,13 +6290,13 @@ def parse_offer_multi(text):
     - ชล100 ชถ200 (2 แผล)
     - ล100 ถ200 (2 แผล)
     
-    ใช้ parse_offer() เพื่อค้นหา pattern ทั้งหมด
+    ใช้ parse_offer() เพื่อค้นหา pattern ทั้งหมด (ไม่ใช้ compact_play_command_text)
     คืน list of offers หรือ None
     """
     if not text:
         return None
     
-    # ลบช่องว่างเพื่อให้ parse ง่ายขึ้น
+    # ลบช่องว่างเพื่อให้ parse ง่ายขึ้น แต่เก็บ space สำหรับการแยก
     clean = re.sub(r"\s+", " ", text.strip())
     
     # ตัดคำสั่งพิเศษออก เช่น "ชตย"
@@ -6728,9 +6728,8 @@ def create_odd_even_post(event, oe_offer: dict):
         "settled_at": None,
     }
 
-    # หักเครดิตผู้โพสต์ทันที (lock ยอดไว้)
-    user["credit"] -= amount
-    save_user_db()
+    # Lazy Debit: ไม่หักเครดิทันที รอจก่อนมีคนติด
+    # จะหักเครดิทีตอน maker ยืนยันชินคำขอ (ขั้นที  3)
     save_round_backup_db(reason="odd_even_post_created")
 
     # เงียบในกลุ่มเมื่อรับโพสต์
@@ -7099,7 +7098,19 @@ def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
         taker = USERS.get(taker_id) or {}
         amount = pending_bet["amount"]
 
-        # ตรวจเครดิต taker อีกครั้งก่อน lock (กันเคสเครดิตถูกใช้ไปแล้ว)
+        # ตรวจเครดิต maker และ taker อีกครั้งก่อน lock (กันเคสเครดิตถูกใช้ไปแล้ว)
+        maker = USERS.get(pending_bet["maker_id"]) or {}
+        if user_credit_amount(maker) < amount:
+            # คืน pending → กลับเป็น open
+            pending_bet["status"] = "open"
+            pending_bet["taker_id"] = None
+            pending_bet["taker_reply_message_id"] = None
+            return (
+                f"❌ จับคู่ไม่สำเร็จ\n"
+                f"ผู้โพสต์มีเครดิตไม่พอ ({user_credit_amount(maker):,} / {amount:,})\n"
+                f"โพสต์กลับมาเปิดรับใหม่แล้ว"
+            )
+        
         if user_credit_amount(taker) < amount:
             # คืน pending → กลับเป็น open
             pending_bet["status"] = "open"
@@ -7111,7 +7122,9 @@ def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
                 f"โพสต์กลับมาเปิดรับใหม่แล้ว"
             )
 
-        # หักเครดิต taker
+        # Lazy Debit: หักเครดิตทั้ง maker และ taker ตอนนี้ (ขั้นที่ 2)
+        maker = USERS.get(pending_bet["maker_id"]) or {}
+        maker["credit"] -= amount
         taker["credit"] -= amount
 
         # ฝั่งตรงข้าม
