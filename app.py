@@ -6283,6 +6283,41 @@ def parse_rollback_result_command(text):
     return None
 
 
+def parse_offer_multi(text):
+    """
+    รับคำสั่งแผลปกติแบบซ้อนหลายแผล เช่น:
+    - +5ถ200 ชล500 (2 แผล)
+    - ชล100 ชถ200 (2 แผล)
+    - ล100 ถ200 (2 แผล)
+    
+    ใช้ parse_offer() เพื่อค้นหา pattern ทั้งหมด
+    คืน list of offers หรือ None
+    """
+    if not text:
+        return None
+    
+    # ลบช่องว่างเพื่อให้ parse ง่ายขึ้น
+    clean = re.sub(r"\s+", " ", text.strip())
+    
+    # ตัดคำสั่งพิเศษออก เช่น "ชตย"
+    clean = re.sub(r"\s+(ชตย|ตย)$", "", clean)
+    
+    # ลองแยกด้วย space
+    parts = clean.split()
+    
+    if len(parts) < 2:
+        return None
+    
+    offers = []
+    for part in parts:
+        offer = parse_offer(part)
+        if offer:
+            offers.append(offer)
+    
+    # ต้องมีอย่างน้อย 2 แผล
+    return offers if len(offers) >= 2 else None
+
+
 def parse_offer(text):
     """
     ตัวอย่างที่รับได้
@@ -13305,8 +13340,8 @@ def should_process_text_message(event, text: str) -> bool:
         if is_round_control_command_text(raw, user_id=user_id):
             return True
 
-        # โพสต์แผลเล่น เช่น ชล500, ชถ500, 320-350ล500
-        if parse_offer(raw):
+        # โพสต์แผลเล่น เช่น ชล500, ชถ500, 320-350ล500 หรือซ้อนหลายแผล
+        if parse_offer(raw) or parse_offer_multi(raw):
             return True
 
         # โพสต์คี่/คู่ เช่น คี่500, คู่1000 หรือซ้อนหลายแผล เช่น คี่500 ชถ500
@@ -14229,7 +14264,20 @@ def handle_message(event):
         handle_clear_all(event, user_id)
         return
 
-    # ลูกค้าโพสต์ เช่น ชล500 / ชถ500
+    # ลูกค้าโพสต์ เช่น ชล500 / ชถ500 หรือซ้อนหลายแผล เช่น +5ถ200 ชล500
+    # ลองตรวจสอบแบบซ้อนหลายแผลก่อน
+    offers_multi = parse_offer_multi(text)
+    if offers_multi and len(offers_multi) > 1:
+        # ซ้อนหลายแผล - สร้างแต่ละแผลแยกกัน
+        with STATE_LOCK:
+            for offer in offers_multi:
+                msg = create_post(event, offer)
+                if msg:
+                    reply_problem(event, msg)
+                    return
+        return
+    
+    # ลองตรวจสอบแบบเดี่ยว
     offer = parse_offer(text)
     if offer:
         msg = create_post(event, offer)
