@@ -6638,14 +6638,391 @@ def create_odd_even_post(event, oe_offer: dict):
     return None
 
 
+def oe_matched_flex(bet: dict, viewer_id: str) -> dict:
+    """
+    Flex Card จับคู่สำเร็จ (คี่/คู่) เหมือน matched_flex_for_user ของระบบเดิม
+    """
+    maker_id = bet["maker_id"]
+    taker_id = bet["taker_id"]
+    maker = USERS.get(maker_id) or {}
+    taker = USERS.get(taker_id) or {}
+    maker_name = maker.get("line_name") or maker.get("name") or "ผู้โพสต์"
+    taker_name = taker.get("line_name") or taker.get("name") or "ผู้ติด"
+    maker_choice = bet["maker_choice"]
+    taker_choice = "คู่" if maker_choice == "คี่" else "คี่"
+    amount = bet["amount"]
+    camp_name = bet.get("camp_name") or "-"
+
+    is_viewer_maker = (viewer_id == maker_id)
+    viewer_role = "ผู้โพสต์" if is_viewer_maker else "ผู้ติด"
+    viewer_choice = maker_choice if is_viewer_maker else taker_choice
+    viewer_choice_label = f"(เลือก {viewer_choice})"
+
+    color_green = "#16A34A"
+
+    def choice_badge(choice_text):
+        bg = "#D1FAE5" if choice_text == "คู่" else "#FEE2E2"
+        color = "#065F46" if choice_text == "คู่" else "#991B1B"
+        return {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": bg, "cornerRadius": "14px",
+            "paddingStart": "10px", "paddingEnd": "10px",
+            "paddingTop": "3px", "paddingBottom": "3px",
+            "contents": [{"type": "text", "text": choice_text,
+                          "size": "sm", "color": color, "weight": "bold"}],
+        }
+
+    def player_col(name, role_label, choice_text, is_you, align_end=False):
+        align = "end" if align_end else "start"
+        role_display = f"{role_label} (คุณ)" if is_you else role_label
+        return {
+            "type": "box", "layout": "vertical", "flex": 5,
+            "paddingAll": "10px", "spacing": "sm",
+            "contents": [
+                {"type": "text", "text": role_display,
+                 "size": "xxs", "color": "#9CA3AF", "align": align},
+                {"type": "text", "text": name,
+                 "size": "sm", "weight": "bold", "color": "#111111",
+                 "wrap": True, "align": align},
+                {
+                    "type": "box", "layout": "vertical",
+                    "alignItems": "flex-end" if align_end else "flex-start",
+                    "contents": [choice_badge(choice_text)],
+                },
+            ],
+        }
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": color_green,
+            "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "horizontal",
+                    "backgroundColor": "#15803D",
+                    "paddingStart": "14px", "paddingEnd": "14px",
+                    "paddingTop": "6px", "paddingBottom": "6px",
+                    "contents": [{
+                        "type": "text",
+                        "text": f"มุมมอง{viewer_role} {viewer_choice_label}",
+                        "size": "xxs", "color": "#bbf7d0", "align": "center",
+                    }],
+                },
+                {
+                    "type": "box", "layout": "horizontal",
+                    "paddingStart": "14px", "paddingEnd": "14px",
+                    "paddingTop": "12px", "paddingBottom": "12px",
+                    "alignItems": "center",
+                    "contents": [
+                        {
+                            "type": "box", "layout": "vertical", "flex": 1, "spacing": "none",
+                            "contents": [
+                                {"type": "text", "text": "✅ จับคู่สำเร็จ",
+                                 "weight": "bold", "size": "md", "color": "#FFFFFF"},
+                                {"type": "text", "text": "คี่ / คู่",
+                                 "size": "xs", "color": "#bbf7d0"},
+                            ]
+                        },
+                        {
+                            "type": "box", "layout": "vertical", "alignItems": "flex-end",
+                            "contents": [
+                                {"type": "text", "text": f"{amount:,}",
+                                 "weight": "bold", "size": "xl", "color": "#FFFFFF"},
+                                {"type": "text", "text": "บาท",
+                                 "size": "xs", "color": "#bbf7d0"},
+                            ]
+                        },
+                    ],
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "14px",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": "#F8FAFC", "cornerRadius": "10px",
+                    "paddingAll": "12px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": f"⚔️  {camp_name}",
+                         "weight": "bold", "size": "sm", "color": "#111111"},
+                        {
+                            "type": "box", "layout": "horizontal", "spacing": "sm",
+                            "contents": [
+                                {
+                                    "type": "box", "layout": "vertical",
+                                    "backgroundColor": "#EDE9FE", "cornerRadius": "14px",
+                                    "paddingStart": "10px", "paddingEnd": "10px",
+                                    "paddingTop": "3px", "paddingBottom": "3px",
+                                    "contents": [{"type": "text", "text": "แผล: คี่/คู่",
+                                                  "size": "xxs", "color": "#6D28D9", "weight": "bold"}],
+                                },
+                                {
+                                    "type": "box", "layout": "vertical",
+                                    "backgroundColor": "#D1FAE5", "cornerRadius": "14px",
+                                    "paddingStart": "10px", "paddingEnd": "10px",
+                                    "paddingTop": "3px", "paddingBottom": "3px",
+                                    "contents": [{"type": "text", "text": f"เล่น {amount:,}",
+                                                  "size": "xxs", "color": "#065F46", "weight": "bold"}],
+                                },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal",
+                    "borderColor": "#E5E7EB", "borderWidth": "1px",
+                    "cornerRadius": "10px",
+                    "alignItems": "center",
+                    "contents": [
+                        player_col(maker_name, "📌 ผู้โพสต์", maker_choice,
+                                   is_you=is_viewer_maker, align_end=False),
+                        {
+                            "type": "box", "layout": "vertical",
+                            "flex": 2, "paddingAll": "6px",
+                            "alignItems": "center", "justifyContent": "center",
+                            "contents": [
+                                {"type": "text", "text": "VS",
+                                 "size": "sm", "weight": "bold",
+                                 "color": "#9CA3AF", "align": "center"},
+                            ],
+                        },
+                        player_col(taker_name, "🎯 ผู้ติด", taker_choice,
+                                   is_you=not is_viewer_maker, align_end=True),
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal",
+                    "backgroundColor": "#F0FDF4", "cornerRadius": "8px",
+                    "paddingAll": "10px", "spacing": "sm",
+                    "alignItems": "center",
+                    "contents": [
+                        {"type": "text", "text": "🎲", "size": "md", "flex": 0},
+                        {
+                            "type": "box", "layout": "vertical", "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": f"คุณเลือก {viewer_choice} — รอผลจากแอดมิน",
+                                 "size": "xs", "weight": "bold", "color": color_green},
+                                {"type": "text", "text": now_text(),
+                                 "size": "xxs", "color": "#9CA3AF"},
+                            ]
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+
+def oe_result_flex(bet: dict, viewer_id: str) -> dict:
+    """
+    Flex Card แสดงผลแพ้ชนะ (คี่/คู่) หลังแอดมินแจ้งผล
+    """
+    maker_id = bet["maker_id"]
+    taker_id = bet["taker_id"]
+    maker = USERS.get(maker_id) or {}
+    taker = USERS.get(taker_id) or {}
+    maker_name = maker.get("line_name") or maker.get("name") or "ผู้โพสต์"
+    taker_name = taker.get("line_name") or taker.get("name") or "ผู้ติด"
+    maker_choice = bet["maker_choice"]
+    taker_choice = "คู่" if maker_choice == "คี่" else "คี่"
+    winning_choice = bet.get("winning_choice", "-")
+    result_value = bet.get("result_value", "-")
+    amount = bet["amount"]
+    camp_name = bet.get("camp_name") or "-"
+    commission = bet.get("commission", 0) or 0
+    commission_percent = COMMISSION_PERCENT
+
+    is_viewer_maker = (viewer_id == maker_id)
+    viewer_choice = maker_choice if is_viewer_maker else taker_choice
+    other_name = taker_name if is_viewer_maker else maker_name
+    other_choice = taker_choice if is_viewer_maker else maker_choice
+
+    if winning_choice == "จาว":
+        viewer_status = "จาว"
+        viewer_delta = 0
+        header_bg = "#6B7280"
+        status_bg = "#F3F4F6"
+        status_color = "#374151"
+        status_icon = "⛔"
+        status_msg = "จาว — คืนทุนทุกคน"
+    elif viewer_choice == winning_choice:
+        viewer_status = "ชนะ"
+        viewer_delta = amount - commission
+        header_bg = "#16A34A"
+        status_bg = "#F0FDF4"
+        status_color = "#16A34A"
+        status_icon = "✅"
+        status_msg = f"ชนะ +{viewer_delta:,}"
+    else:
+        viewer_status = "แพ้"
+        viewer_delta = -amount
+        header_bg = "#EF4444"
+        status_bg = "#FFF1F2"
+        status_color = "#EF4444"
+        status_icon = "❌"
+        status_msg = f"แพ้ {viewer_delta:,}"
+
+    icon_map = {"ชนะ": "✅", "แพ้": "❌", "จาว": "⛔"}
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": header_bg,
+            "paddingAll": "16px",
+            "contents": [
+                {"type": "text",
+                 "text": f"{icon_map.get(viewer_status, '')} {viewer_status} (คี่/คู่)",
+                 "weight": "bold", "size": "lg", "color": "#FFFFFF"},
+                {"type": "text",
+                 "text": f"ผล: {result_value} → {winning_choice}",
+                 "size": "sm", "color": "#FFFFFF", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "14px",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": "#F8FAFC", "cornerRadius": "10px",
+                    "paddingAll": "12px", "spacing": "xs",
+                    "contents": [
+                        {"type": "text", "text": f"⚔️  {camp_name}",
+                         "weight": "bold", "size": "sm", "color": "#111111"},
+                        {"type": "text",
+                         "text": f"คุณเลือก: {viewer_choice}  |  คู่: {other_name} ({other_choice})",
+                         "size": "xs", "color": "#6B7280", "wrap": True},
+                        {"type": "text",
+                         "text": f"ยอด: {amount:,}  |  ค่าคอม: {commission_percent}%",
+                         "size": "xs", "color": "#6B7280"},
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal",
+                    "backgroundColor": status_bg, "cornerRadius": "8px",
+                    "paddingAll": "12px", "spacing": "sm",
+                    "alignItems": "center",
+                    "contents": [
+                        {"type": "text", "text": status_icon, "size": "lg", "flex": 0},
+                        {
+                            "type": "box", "layout": "vertical", "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": status_msg,
+                                 "size": "md", "weight": "bold", "color": status_color},
+                                {"type": "text", "text": now_text(),
+                                 "size": "xxs", "color": "#9CA3AF"},
+                            ]
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+
+def find_oe_pending_taker_by_reply_id(reply_message_id: str):
+    """
+    หาโพสต์คี่/คู่ที่มี pending taker reply message id ตรงกัน
+    คืน bet dict หรือ None
+    """
+    for bet in ODD_EVEN_BETS.values():
+        if (
+            bet.get("status") == "pending_taker"
+            and bet.get("taker_reply_message_id") == reply_message_id
+        ):
+            return bet
+    return None
+
+
+def is_oe_pending_taker_message_id(message_id: str) -> bool:
+    """ตรวจว่า message_id นี้เป็นข้อความ ติด ของ taker ที่รอ maker ยืนยัน"""
+    return find_oe_pending_taker_by_reply_id(message_id) is not None
+
+
 def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
     """
-    นาย B reply โพสต์ คี่/คู่ ของนาย A ด้วยคำว่า ติด/ต
-    ระบบจับคู่ทันที และส่ง push ยืนยันหาทั้งสองฝ่าย
+    Flow 2 ขั้นตอน (เหมือนระบบแผลเดิม):
+
+    ขั้น 1: B reply โพสต์ คี่/คู่ ของ A ด้วย ต/ติด
+            → บันทึก pending_taker, บอทเงียบในกลุ่ม รอ A ยืนยัน
+
+    ขั้น 2: A reply ข้อความ ต/ติด ของ B ด้วย ต/ติด
+            → จับคู่สำเร็จ, หักเครดิต B, ส่ง Flex ยืนยันทั้งสองฝ่าย
     """
     if not quoted_message_id:
         return None
 
+    # ──────────────────────────────────────────────
+    # ขั้น 2: A ยืนยัน taker ที่ pending
+    # ──────────────────────────────────────────────
+    pending_bet = find_oe_pending_taker_by_reply_id(quoted_message_id)
+    if pending_bet:
+        user_id = event.source.user_id
+
+        # ต้องเป็นเจ้าของโพสต์เท่านั้นที่ยืนยันได้
+        if user_id != pending_bet["maker_id"]:
+            return None
+
+        taker_id = pending_bet["taker_id"]
+        taker = USERS.get(taker_id) or {}
+        amount = pending_bet["amount"]
+
+        # ตรวจเครดิต taker อีกครั้งก่อน lock (กันเคสเครดิตถูกใช้ไปแล้ว)
+        if user_credit_amount(taker) < amount:
+            # คืน pending → กลับเป็น open
+            pending_bet["status"] = "open"
+            pending_bet["taker_id"] = None
+            pending_bet["taker_reply_message_id"] = None
+            return (
+                f"❌ จับคู่ไม่สำเร็จ\n"
+                f"คู่ของคุณมีเครดิตไม่พอ ({user_credit_amount(taker):,} / {amount:,})\n"
+                f"โพสต์กลับมาเปิดรับใหม่แล้ว"
+            )
+
+        # หักเครดิต taker
+        taker["credit"] -= amount
+
+        # ฝั่งตรงข้าม
+        maker_choice = pending_bet["maker_choice"]
+        taker_choice = "คู่" if maker_choice == "คี่" else "คี่"
+        pending_bet["taker_choice"] = taker_choice
+        pending_bet["status"] = "matched"
+        pending_bet["matched_at"] = now_text()
+
+        save_user_db()
+        save_round_backup_db(reason="odd_even_matched")
+
+        # ส่ง Flex หาทั้งสองฝ่ายแบบ async
+        push_flex_async(
+            pending_bet["maker_id"],
+            "จับคู่สำเร็จ (คี่/คู่)",
+            oe_matched_flex(pending_bet, pending_bet["maker_id"])
+        )
+        push_flex_async(
+            taker_id,
+            "จับคู่สำเร็จ (คี่/คู่)",
+            oe_matched_flex(pending_bet, taker_id)
+        )
+
+        # เงียบในกลุ่ม
+        return None
+
+    # ──────────────────────────────────────────────
+    # ขั้น 1: B reply โพสต์คี่/คู่ที่เปิดอยู่
+    # ──────────────────────────────────────────────
     bet = ODD_EVEN_BETS.get(quoted_message_id)
     if not bet or bet.get("status") != "open":
         return None
@@ -6657,53 +7034,20 @@ def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
     taker = ensure_user_from_event(event)
     amount = bet["amount"]
 
-    # ถ้าผู้ติดระบุยอด ต้องตรงกับยอดโพสต์
+    # ถ้าระบุยอด ต้องตรงกับยอดโพสต์
     if requested_amount is not None and requested_amount != amount:
         return f"ยอดโพสต์คือ {amount:,} ไม่สามารถติดบางส่วนได้"
 
     if user_credit_amount(taker) < amount:
         return insufficient_credit_warning(taker, amount, play_text=f"ติดคี่/คู่{amount:,}", action="เดิมพันคี่/คู่")
 
-    # หักเครดิตผู้ติด
-    taker["credit"] -= amount
-    save_user_db()
-
-    # ฝั่งตรงข้ามของผู้โพสต์
-    maker_choice = bet["maker_choice"]
-    taker_choice = "คู่" if maker_choice == "คี่" else "คี่"
-
+    # บันทึก taker_id + message_id ของข้อความ ติด ไว้รอ maker ยืนยัน
+    current_msg_id = get_message_id(event)
     bet["taker_id"] = taker_id
-    bet["status"] = "matched"
-    bet["matched_at"] = now_text()
+    bet["taker_reply_message_id"] = current_msg_id
+    bet["status"] = "pending_taker"
 
-    save_round_backup_db(reason="odd_even_matched")
-
-    maker = USERS.get(bet["maker_id"], {})
-    maker_name = maker.get("line_name") or maker.get("name") or "ผู้โพสต์"
-    taker_name = taker.get("line_name") or taker.get("name") or "ผู้ติด"
-    camp_name = bet.get("camp_name") or "-"
-
-    msg_maker = (
-        f"✅ จับคู่สำเร็จ (คี่/คู่)\n"
-        f"ค่าย: {camp_name}\n"
-        f"คุณเลือก: {maker_choice}\n"
-        f"คู่ของคุณ: {taker_name} (เลือก {taker_choice})\n"
-        f"ยอด: {amount:,}\n"
-        f"รอผลแจ้งจากแอดมิน"
-    )
-    msg_taker = (
-        f"✅ จับคู่สำเร็จ (คี่/คู่)\n"
-        f"ค่าย: {camp_name}\n"
-        f"คุณเลือก: {taker_choice}\n"
-        f"คู่ของคุณ: {maker_name} (เลือก {maker_choice})\n"
-        f"ยอด: {amount:,}\n"
-        f"รอผลแจ้งจากแอดมิน"
-    )
-
-    push_text_async(bet["maker_id"], msg_maker)
-    push_text_async(taker_id, msg_taker)
-
-    # เงียบในกลุ่ม
+    # เงียบในกลุ่ม รอ A ยืนยัน
     return None
 
 
@@ -6722,11 +7066,6 @@ def settle_odd_even_bets_for_round(round_id: str, result_value: int):
         if b.get("round_id") == round_id and b.get("status") == "matched"
     ]
 
-    if not target_bets:
-        # คืนเครดิตโพสต์ที่ยังเปิดอยู่ (ไม่มีคนติด) ในรอบนี้
-        _cancel_unmatched_odd_even_for_round(round_id, reason=f"แจ้งผล {result_value}")
-        return
-
     winning_choice = "คู่" if result_value % 2 == 0 else "คี่"
 
     for bet in target_bets:
@@ -6739,65 +7078,41 @@ def settle_odd_even_bets_for_round(round_id: str, result_value: int):
         maker = USERS.get(maker_id)
         taker = USERS.get(taker_id)
 
+        commission = (amount * commission_percent) // 100
+
         if maker_choice == winning_choice:
-            # maker ชนะ
-            commission = (amount * commission_percent) // 100
-            net_win = amount - commission
             if maker:
                 maker["credit"] += (amount * 2) - commission
             winner_id = maker_id
-            loser_id = taker_id
-            winner_choice = maker_choice
-            maker_status, taker_status = "ชนะ", "แพ้"
-            maker_delta, taker_delta = net_win, -amount
         else:
-            # taker ชนะ
-            commission = (amount * commission_percent) // 100
-            net_win = amount - commission
             if taker:
                 taker["credit"] += (amount * 2) - commission
             winner_id = taker_id
-            loser_id = maker_id
-            winner_choice = taker_choice
-            maker_status, taker_status = "แพ้", "ชนะ"
-            maker_delta, taker_delta = -amount, net_win
 
         bet["status"] = "settled"
         bet["settled_at"] = now_text()
         bet["result_value"] = result_value
         bet["winning_choice"] = winning_choice
         bet["winner_id"] = winner_id
+        bet["commission"] = commission
 
-        camp_name = bet.get("camp_name") or "-"
-        maker_name = (USERS.get(maker_id) or {}).get("line_name") or (USERS.get(maker_id) or {}).get("name") or "ผู้โพสต์"
-        taker_name = (USERS.get(taker_id) or {}).get("line_name") or (USERS.get(taker_id) or {}).get("name") or "ผู้ติด"
-
-        def _oe_result_msg(uid, my_choice, my_status, my_delta, other_name, other_choice):
-            icon = "✅ ชนะ" if my_status == "ชนะ" else ("❌ แพ้" if my_status == "แพ้" else "⛔ จาว")
-            sign = "+" if my_delta > 0 else ""
-            return (
-                f"{icon} (คี่/คู่)\n"
-                f"ค่าย: {camp_name}\n"
-                f"ผล: {result_value} → {winning_choice}\n"
-                f"คุณเลือก: {my_choice} → {my_status}\n"
-                f"คู่: {other_name} (เลือก {other_choice})\n"
-                f"ยอด: {amount:,} | ได้/เสีย: {sign}{my_delta:,}\n"
-                f"ค่าคอม: {commission_percent}%"
-            )
-
-        push_text_async(
+        push_flex_async(
             maker_id,
-            _oe_result_msg(maker_id, maker_choice, maker_status, maker_delta, taker_name, taker_choice)
+            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
+            oe_result_flex(bet, maker_id)
         )
-        push_text_async(
+        push_flex_async(
             taker_id,
-            _oe_result_msg(taker_id, taker_choice, taker_status, taker_delta, maker_name, maker_choice)
+            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
+            oe_result_flex(bet, taker_id)
         )
 
     save_user_db()
 
-    # คืนบิลเปิดค้างในรอบนี้
+    # คืนบิลเปิดค้าง (ยังไม่มีคนติด)
     _cancel_unmatched_odd_even_for_round(round_id, reason=f"แจ้งผล {result_value}")
+    # คืนบิล pending_taker ค้าง (มีคนติดแต่เจ้าของยังไม่ยืนยัน)
+    _cancel_pending_odd_even_for_round(round_id, reason=f"แจ้งผล {result_value}")
 
 
 def settle_odd_even_bets_all_jow_for_round(round_id: str, reason: str):
@@ -6828,22 +7143,22 @@ def settle_odd_even_bets_all_jow_for_round(round_id: str, reason: str):
         bet["result_value"] = reason
         bet["winning_choice"] = "จาว"
         bet["winner_id"] = None
+        bet["commission"] = 0
 
-        camp_name = bet.get("camp_name") or "-"
-        maker_name = (USERS.get(maker_id) or {}).get("line_name") or "ผู้โพสต์"
-        taker_name = (USERS.get(taker_id) or {}).get("line_name") or "ผู้ติด"
-
-        msg = (
-            f"⛔ จาว (คี่/คู่) — คืนทุนทุกคน\n"
-            f"ค่าย: {camp_name}\n"
-            f"เหตุผล: {reason}\n"
-            f"ยอด: {amount:,}"
+        push_flex_async(
+            maker_id,
+            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
+            oe_result_flex(bet, maker_id)
         )
-        push_text_async(maker_id, msg)
-        push_text_async(taker_id, msg)
+        push_flex_async(
+            taker_id,
+            f"ผลคี่/คู่ {bet.get('camp_name') or '-'}",
+            oe_result_flex(bet, taker_id)
+        )
 
     save_user_db()
     _cancel_unmatched_odd_even_for_round(round_id, reason=reason)
+    _cancel_pending_odd_even_for_round(round_id, reason=reason)
 
 
 def _cancel_unmatched_odd_even_for_round(round_id: str, reason: str = "รอบปิด"):
@@ -6865,8 +7180,30 @@ def _cancel_unmatched_odd_even_for_round(round_id: str, reason: str = "รอบ
     save_user_db()
 
 
+def _cancel_pending_odd_even_for_round(round_id: str, reason: str = "รอบปิด"):
+    """
+    คืนเครดิตบิลคี่/คู่ที่อยู่ใน pending_taker (มีคนติดแต่เจ้าของยังไม่ยืนยัน)
+    คืนเครดิตให้เฉพาะ maker (taker ยังไม่โดนหัก)
+    """
+    for bet in ODD_EVEN_BETS.values():
+        if bet.get("round_id") == round_id and bet.get("status") == "pending_taker":
+            maker_id = bet["maker_id"]
+            amount = bet["amount"]
+            maker = USERS.get(maker_id)
+            if maker:
+                maker["credit"] += amount
+            bet["status"] = "cancelled"
+            push_text_async(
+                maker_id,
+                f"⚠️ ยกเลิก (คี่/คู่) — ไม่ได้ยืนยันทันก่อนแจ้งผล\n"
+                f"เหตุผล: {reason}\n"
+                f"คืนเครดิต {amount:,} บาท"
+            )
+    save_user_db()
+
+
 def is_odd_even_post_message_id(message_id: str) -> bool:
-    """ตรวจว่า message_id นี้เป็นโพสต์คี่/คู่ที่ยังเปิดอยู่ไหม"""
+    """ตรวจว่า message_id นี้เป็นโพสต์คี่/คู่ที่ยังเปิดอยู่ (รอคนติด)"""
     bet = ODD_EVEN_BETS.get(message_id)
     return bool(bet and bet.get("status") == "open")
 
@@ -9103,6 +9440,10 @@ def is_reply_to_known_play_message(reply_message_id):
 
     # โพสต์คี่/คู่ที่ยังเปิดอยู่
     if is_odd_even_post_message_id(reply_message_id):
+        return True
+
+    # ข้อความ ติด ของ taker คี่/คู่ที่รอ maker ยืนยัน
+    if is_oe_pending_taker_message_id(reply_message_id):
         return True
 
     return False
@@ -13217,8 +13558,11 @@ def handle_message(event):
     if confirm_cmd:
         quoted_message_id = get_reply_message_id(event)
 
-        # ถ้า reply โพสต์คี่/คู่ → จับคู่คี่/คู่
-        if quoted_message_id and is_odd_even_post_message_id(quoted_message_id):
+        # ถ้า reply โพสต์คี่/คู่ (step 1: B ติด) หรือ reply ข้อความ ติด ของ taker (step 2: A ยืนยัน)
+        if quoted_message_id and (
+            is_odd_even_post_message_id(quoted_message_id)
+            or is_oe_pending_taker_message_id(quoted_message_id)
+        ):
             with STATE_LOCK:
                 msg = handle_odd_even_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
             if msg:
