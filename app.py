@@ -6648,6 +6648,9 @@ def parse_lam_result_command(text: str):
     if not m:
         return None
     return m.group(1)
+
+
+def parse_reset_order_command(text):
     """
     คำสั่งล้าง/รีเซ็ตออเดอร์
     - ล้างออเดอร์ / รีเซ็ตออเดอร์ / รีเซ็ต ID ออเดอร์ = ล้างรายการออเดอร์ทั้งหมด และเริ่มนับใหม่ที่ #1
