@@ -135,6 +135,7 @@ CLEAR_CONFIRM_TTL_SECONDS = int(os.getenv("CLEAR_CONFIRM_TTL_SECONDS", "120"))
 ROLLBACK_CONFIRM_TTL_SECONDS = int(os.getenv("ROLLBACK_CONFIRM_TTL_SECONDS", "120"))
 PROFILE_REFRESH_SECONDS = int(os.getenv("PROFILE_REFRESH_SECONDS", "86400"))
 PUSH_WORKERS = int(os.getenv("PUSH_WORKERS", "10"))
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").strip()
 
 # ======================================================
 # Named round mode
@@ -2639,7 +2640,7 @@ def bank_account_backoffice_flex():
                     "height": "md",
                     "action": {
                         "type": "uri",
-                        "label": "กดขอบัญชีที่นี่!",
+                        "label": "ติดตามแอดมิน",
                         "uri": admin_url,
                     },
                 }
