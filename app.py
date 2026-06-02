@@ -2941,16 +2941,23 @@ def rules_flex() -> dict:
     return {
         "type": "bubble",
         "size": "giga",
-        "hero": {
-            "type": "image",
-            "url": RULES_IMAGE_URL,
-            "size": "full",
-            "aspectRatio": "20:13",
-            "aspectMode": "cover",
-            "action": {
-                "type": "uri",
-                "uri": RULES_IMAGE_URL,
-            },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "image",
+                    "url": RULES_IMAGE_URL,
+                    "size": "full",
+                    "aspectRatio": "263:166",
+                    "aspectMode": "fit",
+                    "action": {
+                        "type": "uri",
+                        "uri": RULES_IMAGE_URL,
+                    },
+                }
+            ],
         },
     }
 
