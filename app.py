@@ -9084,6 +9084,7 @@ def is_reply_to_known_play_message(reply_message_id):
     ตรวจว่าข้อความที่ถูก reply เป็นข้อความใน flow แผลเล่นหรือไม่
     - โพสต์แผลต้นทาง เช่น ชล500 / ชถ200
     - ข้อความ ต/ติด ของคนที่มาติด ซึ่งรอเจ้าของโพสต์ยืนยัน
+    - โพสต์คี่/คู่ ที่ยังเปิดอยู่
     """
     if not reply_message_id:
         return False
@@ -9099,6 +9100,10 @@ def is_reply_to_known_play_message(reply_message_id):
     counter_post, counter_taker = find_counter_pending_by_reply_message_id(reply_message_id)
     if counter_post and counter_taker:
         return counter_post.get("round_id") == STATE.get("round_id")
+
+    # โพสต์คี่/คู่ที่ยังเปิดอยู่
+    if is_odd_even_post_message_id(reply_message_id):
+        return True
 
     return False
 
@@ -12287,6 +12292,10 @@ def should_process_text_message(event, text: str) -> bool:
 
         # โพสต์แผลเล่น เช่น ชล500, ชถ500, 320-350ล500
         if parse_offer(raw):
+            return True
+
+        # โพสต์คี่/คู่ เช่น คี่500, คู่1000
+        if parse_odd_even_offer(raw):
             return True
 
         # คำว่า ต/ติด ให้บอทสนใจเฉพาะเมื่อ reply ข้อความเท่านั้น
