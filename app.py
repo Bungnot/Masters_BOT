@@ -2399,10 +2399,10 @@ def money_text(value):
 # Bank account command
 # ======================================================
 
-BANK_ACCOUNT_NUMBER = "9382633298"
-BANK_ACCOUNT_DISPLAY_NUMBER = "938-2633-298"
-BANK_ACCOUNT_BANK = "ไทยพาณิชย์"
-BANK_ACCOUNT_NAME = "ภานุพงษ์ เอี่ยมท่า"
+BANK_ACCOUNT_NUMBER = "3360616359"
+BANK_ACCOUNT_DISPLAY_NUMBER = "336-0-61635-9"
+BANK_ACCOUNT_BANK = "กรุงไทย"
+BANK_ACCOUNT_NAME = "จารุณี สว่างวงษ์"
 
 # ======================================================
 # Multi-account auto topup (รองรับสูงสุด 6 บัญชี)
@@ -2427,7 +2427,7 @@ SINGLE_AUTO_TOPUP_RECEIVER = {
     "bankName": BANK_ACCOUNT_BANK,
     "accountNumber": BANK_ACCOUNT_NUMBER,
     "accountNameTH": BANK_ACCOUNT_NAME,
-    "accountNameEN": "",
+    "accountNameEN": "Jarunee savangvong",
     "accountNameENAliases": [],
 }
 # ดีเลคำสั่งบัญชีในกลุ่ม/ห้องเดียวกัน กันคนพิมพ์ บช/บัญชี รัว ๆ แล้วบอทตอบซ้ำ
@@ -2514,10 +2514,13 @@ def bank_account_text() -> str:
                 icon = v
                 break
 
-        # จัดรูปเลขบัญชีเป็น xxx-x-xxxxx-x ถ้าตัวเลข 10 หลัก
+        # จัดรูปเลขบัญชีตามจำนวนหลัก
         digits = acc_no.replace("-", "").replace(" ", "")
         if digits.isdigit() and len(digits) == 10:
             display_no = f"{digits[:3]}-{digits[3]}-{digits[4:9]}-{digits[9]}"
+        elif digits.isdigit() and len(digits) == 12:
+            # ออมสิน 12 หลัก: xxx-x-xxxxxxx-x
+            display_no = f"{digits[:3]}-{digits[3]}-{digits[4:11]}-{digits[11]}"
         else:
             display_no = acc_no
 
@@ -12627,25 +12630,23 @@ def handle_message(event):
             return
 
         if is_private_chat(event):
-            # แชทส่วนตัว: ส่งเลขบัญชีครบถ้วน + Flex ปุ่มติดตามแอดมิน
-            reply_text_and_flex(
-                event.reply_token,
-                bank_account_text(),
-                "ขอเลขบัญชี",
-                bank_account_backoffice_flex(),
-            )
+            # แชทส่วนตัว: reply TEXT ก่อน แล้ว push Flex ตามหลัง
+            # (ไม่ใช้ reply_text_and_flex เพราะ LINE บางครั้ง reject messages 2 ชิ้นใน replyToken เดียว)
+            reply_text(event.reply_token, bank_account_text())
+            def _push_flex_private():
+                push_flex(user_id, "ขอเลขบัญชี", bank_account_backoffice_flex())
+            EXECUTOR.submit(_push_flex_private)
         else:
-            # กลุ่มหน้าบ้าน: ส่งเฉพาะ Flex สีเขียว ไม่แสดงเลขบัญชีในกลุ่ม
-            # พร้อม push แจ้งเลขบัญชีในแชทส่วนตัวของลูกค้าคนนั้น
+            # กลุ่มหน้าบ้าน: reply Flex สีเขียวในกลุ่ม (ไม่แสดงเลขบัญชี)
+            # แล้ว push TEXT เลขบัญชีไปในแชทส่วนตัวของลูกค้าคนนั้น
             reply_flex(
                 event.reply_token,
                 "ขอเลขบัญชี",
                 bank_account_backoffice_flex(),
             )
-            # push เลขบัญชีในแชทส่วนตัวของลูกค้าโดยตรง
-            def _push_account():
+            def _push_account_group():
                 push_text(user_id, bank_account_text())
-            EXECUTOR.submit(_push_account)
+            EXECUTOR.submit(_push_account_group)
         return
 
 
