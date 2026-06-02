@@ -13514,8 +13514,6 @@ def handle_clear_all(event, user_id):
         "พร้อมเปิดรอบใหม่ได้เลย")
 
 
-@handler.add(MessageEvent, message=TextMessageContent)
-
 def handle_multi_play_command(event, text: str):
     """
     ประมวลผลคำสั่งเล่นหลายแผล เช่น:
@@ -13607,6 +13605,7 @@ def handle_multi_play_command(event, text: str):
         f"รายละเอียดแผลที่สร้าง:\n{details_str}"
     )
 
+@handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     text = event.message.text.strip()
 
