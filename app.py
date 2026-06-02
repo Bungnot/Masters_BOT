@@ -913,6 +913,9 @@ def all_rounds_report(chat_id: str = None) -> str:
         else:
             status = "ปิดแล้ว / รอผล"
         matched_count = sum(1 for m in MATCHES.values() if m.get("round_id") == st.get("round_id") and m.get("status") == "matched")
+        # รวมแผลคี่/คู่ที่จับคู่สำเร็จเข้าไปด้วยใน "บิลรอผล"
+        oe_matched_count = sum(1 for b in ODD_EVEN_BETS.values() if b.get("round_id") == st.get("round_id") and b.get("status") == "matched")
+        matched_count += oe_matched_count
         internal_base = f" | รหัสในระบบ: ฐาน{base_no}" if not USE_CAMP_NAME_LABELS else ""
         rows.append(
             f"{status} | ค่าย: {st.get('camp_name') or '-'} | ราคา: {state_price_text(st)} | บิลรอผล: {matched_count}{internal_base}"
@@ -1213,6 +1216,12 @@ def _build_single_round_backup(round_id: str, base_no: str = None, state: dict =
         if isinstance(m, dict) and m.get("status") in {"matched", "settled"}
     )
 
+    # ดึงข้อมูล ODD_EVEN_BETS ของรอบนี้เพื่อสำรองข้อมูลด้วย
+    round_odd_even_bets = {
+        k: v for k, v in (ODD_EVEN_BETS or {}).items()
+        if isinstance(v, dict) and str(v.get("round_id") or "") == round_id
+    }
+
     return {
         "version": 2,
         "type": "single_round_backup",
@@ -1225,6 +1234,7 @@ def _build_single_round_backup(round_id: str, base_no: str = None, state: dict =
         "state": round_state,
         "posts": round_posts,
         "matches": round_matches,
+        "odd_even_bets": round_odd_even_bets,  # เพิ่ม odd_even_bets เข้าไปใน backup
         "summary": {
             "post_count": len(round_posts),
             "match_count": len(round_matches),
@@ -1447,6 +1457,7 @@ def restore_round_backup_db():
         new_rounds = {}
         new_posts = {}
         new_matches = {}
+        new_odd_even_bets = {}  # ตัวแปรชั่วคราวสำหรับเก็บข้อมูลคี่/คู่จาก backup
 
         for base_no, (_, payload) in selected_by_base.items():
             raw_state = payload.get("state") or {}
@@ -1462,6 +1473,8 @@ def restore_round_backup_db():
                 new_posts.update(payload.get("posts") or {})
             if isinstance(payload.get("matches"), dict):
                 new_matches.update(payload.get("matches") or {})
+            if isinstance(payload.get("odd_even_bets"), dict):
+                new_odd_even_bets.update(payload.get("odd_even_bets") or {})
 
         if new_rounds:
             ROUNDS = new_rounds
@@ -1478,6 +1491,12 @@ def restore_round_backup_db():
         POSTS.update(new_posts)
         MATCHES.clear()
         MATCHES.update(new_matches)
+        
+        # กู้คืน ODD_EVEN_BETS จาก backup รอบ
+        global ODD_EVEN_BETS
+        if new_odd_even_bets:
+            # อัปเดตเฉพาะรายการที่มีใน backup (ไม่ clear เผื่อมีรายการรอบใหม่อยู่แล้ว)
+            ODD_EVEN_BETS.update(new_odd_even_bets)
 
         print(
             "ROUND BACKUP RESTORED PER ROUND: "
@@ -1559,6 +1578,13 @@ def load_user_db():
 
         users = data.get("users", {})
         next_member_no = data.get("next_member_no")
+        
+        # กู้คืน ODD_EVEN_BETS จากไฟล์ users.json
+        global ODD_EVEN_BETS
+        loaded_oe = data.get("odd_even_bets", {})
+        if isinstance(loaded_oe, dict):
+            ODD_EVEN_BETS.clear()
+            ODD_EVEN_BETS.update(loaded_oe)
 
         if not isinstance(users, dict):
             users = {}
@@ -1589,6 +1615,7 @@ def save_user_db():
     data = {
         "next_member_no": NEXT_MEMBER_NO,
         "users": USERS,
+        "odd_even_bets": ODD_EVEN_BETS,  # บันทึก ODD_EVEN_BETS ลงไฟล์ users.json
         "updated_at": datetime.now().isoformat(),
     }
 
@@ -7001,6 +7028,9 @@ def handle_odd_even_confirm(event, quoted_message_id, requested_amount=None):
         pending_bet["taker_choice"] = taker_choice
         pending_bet["status"] = "matched"
         pending_bet["matched_at"] = now_text()
+        
+        # ออกเลขออเดอร์ให้แผลคี่/คู่ที่จับคู่สำเร็จ
+        pending_bet["order_no"] = get_next_order_no()
 
         save_user_db()
         save_round_backup_db(reason="odd_even_matched")
@@ -7066,7 +7096,7 @@ def settle_odd_even_bets_for_round(round_id: str, result_value: int):
         if b.get("round_id") == round_id and b.get("status") == "matched"
     ]
 
-    winning_choice = "คู่" if result_value % 2 == 0 else "คี่"
+    winning_choice = "คู่" if (result_value % 100) % 2 == 0 else "คี่"
 
     for bet in target_bets:
         maker_id = bet["maker_id"]
@@ -7955,6 +7985,7 @@ def get_active_play_rows_for_user(user_id: str):
     """
     rows = []
 
+    # 1) ดึงข้อมูลแผลปกติที่ยังไม่คิดผล
     for match in list(MATCHES.values()):
         if match.get("status") != "matched":
             continue
@@ -7999,6 +8030,58 @@ def get_active_play_rows_for_user(user_id: str):
             "price_label": match_price_label(match),
             "amount": int(match.get("amount", 0) or 0),
             "created_at": match.get("created_at") or "",
+        })
+
+    # 2) ดึงข้อมูลแผลคี่/คู่ที่ยังไม่คิดผล (matched)
+    for bet in list(ODD_EVEN_BETS.values()):
+        if bet.get("status") != "matched":
+            continue
+        if user_id not in [bet.get("maker_id"), bet.get("taker_id")]:
+            continue
+
+        bet_round_id = bet.get("round_id")
+        round_state = get_state_by_round_id(bet_round_id)
+
+        # ถ้ารอบนั้นถูกแจ้งผลแล้ว ไม่ต้องแสดงใน "รายการ"
+        if round_state and round_state.get("settled"):
+            continue
+
+        base_no = normalize_base_no(
+            (round_state or {}).get("base_no")
+            or get_base_no_by_round_id(bet_round_id)
+            or "1"
+        )
+        camp_name = (
+            bet.get("camp_name")
+            or (round_state or {}).get("camp_name")
+            or "-"
+        )
+
+        maker_id = bet.get("maker_id")
+        taker_id = bet.get("taker_id")
+        other_id = taker_id if user_id == maker_id else maker_id
+        
+        # ตัวเลือกของผู้ใช้คนนี้
+        user_choice = bet.get("maker_choice") if user_id == maker_id else bet.get("taker_choice")
+        
+        # แปลงข้อความแสดงผลแผล
+        user_play_text = f"แผล: คี่/คู่"
+        price_text = f"เล่น {bet.get('amount', 0):,} ({user_choice})"
+
+        rows.append({
+            "order_no": bet.get("order_no", "-"),
+            "round_id": bet_round_id,
+            "base_no": base_no,
+            "base_label": (f"ค่าย: {camp_name}" if USE_CAMP_NAME_LABELS else f"ฐาน{base_no}"),
+            "camp_name": camp_name,
+            "other_id": other_id,
+            "other_name": user_display_name(other_id),
+            "user_side": "ชนะ",  # บังคับให้เป็นสีเขียว
+            "play_text": user_play_text,
+            "price_text": price_text,
+            "price_label": "คี่/คู่",
+            "amount": int(bet.get("amount", 0) or 0),
+            "created_at": bet.get("matched_at") or bet.get("created_at") or "",
         })
 
     def sort_key(row):
@@ -10126,8 +10209,26 @@ def settle_round(result_value: int):
     clear_pending_price()
     clear_pending_round_clear()
 
-    if not target_matches:
-        return f"แจ้งผล {result_value} แล้ว แต่ไม่มีรายการที่จับคู่สำเร็จในรอบนี้"
+    # ตรวจสอบแผลคี่/คู่ด้วย
+    target_oe_bets = [
+        b for b in ODD_EVEN_BETS.values()
+        if b.get("round_id") == current_round_id and b.get("status") == "matched"
+    ]
+
+    if not target_matches and not target_oe_bets:
+        STATE["result"] = result_value
+        STATE["settled"] = True
+        STATE["opened"] = False
+        STATE["updated_at"] = now_text()
+        STATE["pending_result"] = None
+        STATE["pending_result_at"] = None
+        clear_pending_price()
+        clear_pending_round_clear()
+        
+        # ตัดสินบิลคี่/คู่ในรอบนี้ด้วยผลเดียวกัน แม้ไม่มีแผลปกติเลย
+        settle_odd_even_bets_for_round(current_round_id, result_value)
+        save_user_db()
+        return f"แจ้งผล {result_value} แล้ว แต่ไม่มีรายการที่จับคู่สำเร็จในรอบนี้ (ทำการตัดสินผลแผลคี่/คู่เรียบร้อย)" 
 
     user_rows = {}
     user_net = {}
@@ -10635,6 +10736,35 @@ def rollback_round_result(rollback_by: str = "-"):
         match["rolled_back_at"] = rollback_at
         match["rolled_back_by"] = rollback_by or "-"
 
+    # ──────────────────────────────────────────────
+    # ย้อนผลแผลคี่/คู่ (ODD_EVEN_BETS)
+    # ──────────────────────────────────────────────
+    oe_debits = {}
+    oe_target_bets = [
+        b for b in ODD_EVEN_BETS.values()
+        if b.get("round_id") == current_round_id and b.get("status") == "settled"
+    ]
+    
+    for bet in oe_target_bets:
+        amount = bet["amount"]
+        winner_id = bet.get("winner_id")
+        commission = bet.get("commission", 0) or 0
+        
+        if winner_id:
+            payout = (amount * 2) - commission
+            oe_debits[winner_id] = oe_debits.get(winner_id, 0) + payout
+            
+        # เปลี่ยนสถานะกลับเป็น matched และลบข้อมูลแจ้งผล
+        bet["status"] = "matched"
+        for key in ["settled_at", "result_value", "winning_choice", "winner_id", "commission"]:
+            bet.pop(key, None)
+            
+    # ดึงเครดิตคืนจากผู้ชนะแผลคี่/คู่
+    for uid, amt in oe_debits.items():
+        user = USERS.get(uid)
+        if user:
+            user["credit"] = max(0, int(user.get("credit", 0) or 0) - amt)
+
     removed_profit, removed_profit_records = rollback_profit_for_round(current_round_id, rollback_by=rollback_by)
 
     STATE["result"] = None
@@ -10760,6 +10890,20 @@ def current_round_report():
         pending_clear = STATE.get("pending_clear") or {}
         pending_text += f"\nCR ที่รอยืนยัน: ค่าย {pending_clear.get('camp_name') or '-'}"
 
+    # นับจำนวนแผลคู่/คี่ในรอบปัจจุบัน
+    oe_matched_count = sum(
+        1 for b in ODD_EVEN_BETS.values()
+        if b.get("round_id") == current_round_id and b.get("status") == "matched"
+    )
+    oe_pending_count = sum(
+        1 for b in ODD_EVEN_BETS.values()
+        if b.get("round_id") == current_round_id and b.get("status") == "pending_taker"
+    )
+    oe_open_count = sum(
+        1 for b in ODD_EVEN_BETS.values()
+        if b.get("round_id") == current_round_id and b.get("status") == "open"
+    )
+
     return (
         f"CK | สถานะรอบปัจจุบัน\n\n"
         f"ค่าย: {STATE.get('camp_name') or '-'}\n"
@@ -10771,7 +10915,10 @@ def current_round_report():
         f"แผลที่คิดผลแล้ว: {settled_count}\n"
         f"แผลรอยืนยัน: {pending_count}\n"
         f"แผล ชตย รอคิดผล: {no_price_only_count}\n"
-        f"แผลยกเลิก: {cancelled_count}"
+        f"แผลยกเลิก: {cancelled_count}\n"
+        f"แผลคู่/คี่สำเร็จ: {oe_matched_count}\n"
+        f"แผลคู่/คี่รอยืนยัน: {oe_pending_count}\n"
+        f"แผลคู่/คี่รอคนติด: {oe_open_count}"
         f"{pending_text}"
     )
 
@@ -12771,12 +12918,37 @@ def handle_clear_all(event, user_id):
                 elif match.get("status") in {"open", "pending"}:
                     match["status"] = "cancelled"
                     match["cancel_reason"] = reason
+        # คืนเครดิตและยกเลิกแผลคี่/คู่ (ODD_EVEN_BETS) ทั้งหมดที่ยังไม่แจ้งผล
+        for bet in list(ODD_EVEN_BETS.values()):
+            if bet.get("status") == "matched":
+                amount = int(bet.get("amount", 0) or 0)
+                maker = USERS.get(bet.get("maker_id"))
+                taker = USERS.get(bet.get("taker_id"))
+                if maker:
+                    maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+                    total_refunded_credit += amount
+                if taker:
+                    taker["credit"] = int(taker.get("credit", 0) or 0) + amount
+                    total_refunded_credit += amount
+                bet["status"] = "cancelled"
+                bet["cancel_reason"] = reason
+                total_refunded_matches += 1
+            elif bet.get("status") in {"open", "pending_taker"}:
+                amount = int(bet.get("amount", 0) or 0)
+                maker = USERS.get(bet.get("maker_id"))
+                if maker:
+                    maker["credit"] = int(maker.get("credit", 0) or 0) + amount
+                    total_refunded_credit += amount
+                bet["status"] = "cancelled"
+                bet["cancel_reason"] = reason
+
         try:
             save_user_db()
         except Exception as e:
             print(f"CLEAR ALL save_user_db error: {e}")
         POSTS.clear()
         MATCHES.clear()
+        ODD_EVEN_BETS.clear()  # ล้างแผลคี่/คู่ทั้งหมดออกจากหน่วยความจำ
         for base_no in list(ROUNDS.keys()):
             ROUNDS[base_no] = make_round_state(base_no)
         ACTIVE_BASE_NO = "1"
