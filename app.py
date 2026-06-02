@@ -11528,6 +11528,68 @@ tr:hover td { background: rgba(255,255,255,.02); }
     </div>
   </div>
 
+  <!-- Section: การเชื่อมต่อ LINE -->
+  <div class="section" style="margin-top:20px">
+    <div class="section-header">
+      <div class="section-title"><span class="icon">🔗</span> รูปแบบการเชื่อมต่อ LINE OA</div>
+      <button class="btn btn-ghost" style="font-size:12px" onclick="testWebhook()">🔌 ทดสอบการเชื่อมต่อ</button>
+    </div>
+    <div style="padding:20px;display:grid;gap:16px">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ความลับแชนแนล (Channel Secret)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="inp-secret" type="password" value="" readonly
+              style="flex:1;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px;font-family:monospace">
+            <button onclick="toggleVis('inp-secret',this)" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">👁</button>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">แชนแนลแอ็คเซสโทเคน (Channel Access Token)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="inp-token" type="password" value="" readonly
+              style="flex:1;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px;font-family:monospace">
+            <button onclick="toggleVis('inp-token',this)" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">👁</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+        <div>
+          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ไลน์ออฟฟิเชียลแอคเค้าท์ (LINE OA Name)</label>
+          <input id="inp-oa-name" type="text" readonly
+            style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ไลน์ไอดี (LINE ID)</label>
+          <input id="inp-line-id" type="text" readonly
+            style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ชาแนลไอดี (Channel ID)</label>
+          <input id="inp-channel-id" type="text" readonly
+            style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);padding-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <label style="font-size:12px;color:var(--text3)">สำหรับการตั้งค่าขั้นสูง Webhook และ Group ID</label>
+          <span id="webhook-status" style="font-size:12px;color:var(--text3)">ยังไม่ได้ทดสอบ</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <input id="inp-webhook-url" type="text" placeholder="https://your-server.app/callback"
+            style="flex:1;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
+          <button onclick="setWebhookUrl()" class="btn btn-primary" style="white-space:nowrap">🔗 ตั้งค่า</button>
+          <button onclick="testWebhook()" class="btn" style="background:var(--green2);color:#fff;white-space:nowrap">✅ Verify</button>
+        </div>
+        <div id="webhook-result" style="margin-top:10px;padding:12px;border-radius:8px;font-size:13px;display:none"></div>
+      </div>
+
+    </div>
+  </div>
+
 </main>
 
 <!-- Modal: เพิ่ม/แก้ไขเครดิต -->
@@ -11777,6 +11839,66 @@ document.addEventListener('keydown', e => {
 });
 
 loadDashboard();
+loadConnectionInfo();
+
+/* ── Connection Info ── */
+async function loadConnectionInfo() {
+  const r = await api('/admin/api/connection');
+  if (!r) return;
+  document.getElementById('inp-secret').value = r.channel_secret || '';
+  document.getElementById('inp-token').value = r.channel_token || '';
+  document.getElementById('inp-oa-name').value = r.oa_name || '-';
+  document.getElementById('inp-line-id').value = r.line_id || '-';
+  document.getElementById('inp-channel-id').value = r.channel_id || '-';
+  document.getElementById('inp-webhook-url').value = r.webhook_url || '';
+}
+
+function toggleVis(inputId, btn) {
+  const inp = document.getElementById(inputId);
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '🙈'; }
+  else { inp.type = 'password'; btn.textContent = '👁'; }
+}
+
+async function testWebhook() {
+  const statusEl = document.getElementById('webhook-status');
+  const resultEl = document.getElementById('webhook-result');
+  statusEl.textContent = '⏳ กำลังทดสอบ...';
+  statusEl.style.color = '#93c5fd';
+  resultEl.style.display = 'none';
+  const r = await api('/admin/api/webhook/verify', 'POST');
+  if (r && r.success) {
+    statusEl.textContent = '✅ เชื่อมต่อปกติ';
+    statusEl.style.color = '#86efac';
+    showWebhookResult('✅ Webhook ทำงานปกติ!  status: ' + r.statusCode, '#14532d', '#16a34a', '#86efac');
+  } else {
+    statusEl.textContent = '❌ เชื่อมต่อไม่ได้';
+    statusEl.style.color = '#fca5a5';
+    showWebhookResult('❌ ทดสอบไม่ผ่าน: ' + JSON.stringify(r), '#4c0519', '#dc2626', '#fca5a5');
+  }
+}
+
+async function setWebhookUrl() {
+  const url = document.getElementById('inp-webhook-url').value.trim();
+  if (!url) { toast('ใส่ Webhook URL ก่อน', 'error'); return; }
+  const resultEl = document.getElementById('webhook-result');
+  showWebhookResult('⏳ กำลังตั้งค่า...', '#1e3a5f', '#2563eb', '#93c5fd');
+  const r = await api('/admin/api/webhook/set', 'POST', {url});
+  if (r && r.ok) {
+    showWebhookResult('✅ ตั้งค่า Webhook URL สำเร็จ!  URL: ' + url, '#14532d', '#16a34a', '#86efac');
+    toast('ตั้งค่า Webhook สำเร็จ ✓');
+  } else {
+    showWebhookResult('❌ ตั้งค่าไม่สำเร็จ: ' + JSON.stringify(r), '#4c0519', '#dc2626', '#fca5a5');
+  }
+}
+
+function showWebhookResult(msg, bg, border, color) {
+  const el = document.getElementById('webhook-result');
+  el.style.display = 'block';
+  el.style.background = bg;
+  el.style.border = '1px solid ' + border;
+  el.style.color = color;
+  el.textContent = msg;
+}
 </script>
 </body>
 </html>"""
@@ -11896,6 +12018,82 @@ def admin_api_profit():
     rounds.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return {"ok": True, "rounds": rounds, "total_profit": total}
 
+
+
+@app.route("/admin/api/connection", methods=["GET"])
+def admin_api_connection():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+    # ดึงข้อมูล OA จาก LINE API
+    oa_name = "-"
+    line_id = "-"
+    channel_id = "-"
+    webhook_url = f"{public_url}/callback"
+    try:
+        resp = requests.get(
+            "https://api.line.me/v2/bot/info",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+            timeout=(3, 5),
+        )
+        if resp.status_code == 200:
+            info = resp.json()
+            oa_name = info.get("displayName") or "-"
+            line_id = info.get("basicId") or "-"
+            channel_id = str(info.get("userId") or "-")
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "channel_secret": LINE_CHANNEL_SECRET,
+        "channel_token": LINE_CHANNEL_ACCESS_TOKEN,
+        "oa_name": oa_name,
+        "line_id": line_id,
+        "channel_id": channel_id,
+        "webhook_url": webhook_url,
+    }
+
+
+@app.route("/admin/api/webhook/verify", methods=["POST"])
+def admin_api_webhook_verify():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    try:
+        public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+        webhook_url = f"{public_url}/callback"
+        resp = requests.post(
+            "https://api.line.me/v2/bot/channel/webhook/test",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
+            json={"webhookEndpoint": webhook_url},
+            timeout=(5, 10),
+        )
+        data = resp.json()
+        return {"success": data.get("success", False), "statusCode": data.get("statusCode"), "timestamp": data.get("timestamp")}
+    except Exception as e:
+        return {"success": False, "error": str(e)}, 500
+
+
+@app.route("/admin/api/webhook/set", methods=["POST"])
+def admin_api_webhook_set():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        url = (body.get("url") or request.args.get("url") or "").strip()
+        if not url:
+            public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+            url = f"{public_url}/callback"
+        resp = requests.put(
+            "https://api.line.me/v2/bot/channel/webhook/endpoint",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
+            json={"webhookEndpoint": url},
+            timeout=(5, 10),
+        )
+        if resp.status_code == 200:
+            return {"ok": True, "webhook_url": url}
+        return {"ok": False, "status": resp.status_code, "body": resp.text[:300]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
 
 
 @app.route("/admin/webhook", methods=["GET"])
