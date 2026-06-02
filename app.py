@@ -8136,6 +8136,26 @@ def get_active_play_rows_for_user(user_id: str):
             "amount": int(match.get("amount", 0) or 0),
             "created_at": match.get("created_at") or "",
         })
+        
+        # เพิ่มแผลจาก linked_offers
+        for linked_offer in match.get("linked_offers", []):
+            linked_play_text = f"{linked_offer['plus']}{linked_offer['raw_alias']}{linked_offer['amount']}"
+            linked_user_side = linked_offer.get("maker_side") if user_id == match.get("maker_id") else opposite_side(linked_offer.get("maker_side"))
+            rows.append({
+                "order_no": match.get("order_no", "-"),
+                "round_id": match_round_id,
+                "base_no": base_no,
+                "base_label": (f"ค่าย: {camp_name}" if USE_CAMP_NAME_LABELS else f"ฐาน{base_no}"),
+                "camp_name": camp_name,
+                "other_id": other_id,
+                "other_name": user_display_name(other_id),
+                "user_side": linked_user_side,
+                "play_text": linked_play_text,
+                "price_text": format_match_price_text_for_active_list(match),
+                "price_label": match_price_label(match),
+                "amount": int(linked_offer.get("amount", 0) or 0),
+                "created_at": match.get("created_at") or "",
+            })
 
     # 2) ดึงข้อมูลแผลคี่/คู่ที่ยังไม่คิดผล (matched)
     for bet in list(ODD_EVEN_BETS.values()):
@@ -10889,6 +10909,74 @@ def settle_round(result_value: int):
             "commission": (amount - taker_delta) if taker_status == "ชนะ" else 0,
         })
         user_net[taker_id] = user_net.get(taker_id, 0) + taker_delta
+        
+        # เพิ่มการคำนวณผล linked_offers
+        for linked_offer in match.get("linked_offers", []):
+            linked_amount = linked_offer["amount"]
+            linked_maker_side = linked_offer.get("maker_side")
+            linked_taker_side = opposite_side(linked_maker_side)
+            
+            # ใช้ result_value เดียวกับแผลแรก
+            if STATE.get("price_mode") == "no_price" and not match.get("is_custom_price"):
+                linked_winning_side = "จาว"
+            else:
+                linked_winning_side = winning_side_for_match_result(match, result_value, price_min, price_max)
+            
+            if linked_winning_side == "จาว":
+                if maker:
+                    maker["credit"] += linked_amount
+                if taker:
+                    taker["credit"] += linked_amount
+                linked_maker_delta = 0
+                linked_taker_delta = 0
+                linked_maker_status = "จาว"
+                linked_taker_status = "จาว"
+            elif linked_winning_side == linked_maker_side:
+                linked_commission = calculate_commission(linked_amount)
+                if maker:
+                    maker["credit"] += (linked_amount * 2) - linked_commission
+                linked_maker_delta = linked_amount - linked_commission
+                linked_taker_delta = -linked_amount
+                linked_maker_status = "ชนะ"
+                linked_taker_status = "แพ้"
+                round_commission_total += linked_commission
+            else:
+                linked_commission = calculate_commission(linked_amount)
+                if taker:
+                    taker["credit"] += (linked_amount * 2) - linked_commission
+                linked_maker_delta = -linked_amount
+                linked_taker_delta = linked_amount - linked_commission
+                linked_maker_status = "แพ้"
+                linked_taker_status = "ชนะ"
+                round_commission_total += linked_commission
+            
+            # เพิ่มรายการแผลที่ 2, 3, ... ให้ maker
+            user_rows.setdefault(maker_id, []).append({
+                "order_no": match["order_no"],
+                "other_id": taker_id,
+                "user_side": linked_maker_side,
+                "status": linked_maker_status,
+                "delta": linked_maker_delta,
+                "price_min": price_min,
+                "price_max": price_max,
+                "price_text": match_price_text,
+                "commission": (linked_amount - linked_maker_delta) if linked_maker_status == "ชนะ" else 0,
+            })
+            user_net[maker_id] = user_net.get(maker_id, 0) + linked_maker_delta
+            
+            # เพิ่มรายการแผลที่ 2, 3, ... ให้ taker
+            user_rows.setdefault(taker_id, []).append({
+                "order_no": match["order_no"],
+                "other_id": maker_id,
+                "user_side": linked_taker_side,
+                "status": linked_taker_status,
+                "delta": linked_taker_delta,
+                "price_min": price_min,
+                "price_max": price_max,
+                "price_text": match_price_text,
+                "commission": (linked_amount - linked_taker_delta) if linked_taker_status == "ชนะ" else 0,
+            })
+            user_net[taker_id] = user_net.get(taker_id, 0) + linked_taker_delta
 
     if round_commission_total > 0:
         add_profit_record(
