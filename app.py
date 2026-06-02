@@ -2945,9 +2945,8 @@ def rules_flex() -> dict:
             "type": "image",
             "url": RULES_IMAGE_URL,
             "size": "full",
-            "aspectRatio": "2:3",
-            "aspectMode": "fit",
-            "backgroundColor": "#FFFFFF",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
             "action": {
                 "type": "uri",
                 "uri": RULES_IMAGE_URL,
