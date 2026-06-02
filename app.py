@@ -13387,7 +13387,7 @@ def handle_message(event):
             reply_text(event.reply_token, msg)
         return
 
-    # แจ้งผลตัวเลข ต้องยืนยัน 2 ครั้ง
+    # แจ้งผลตัวเลข ต้องยืนยัน 2 ครั้งฟหกหฟกฟหกฟหกฟหกฟหกฟหกฟหกฟหกฟหกฟกฟ
     result_value = parse_result_command(text)
     if result_value is not None:
         if not is_admin(user_id):
