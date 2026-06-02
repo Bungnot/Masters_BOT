@@ -3135,7 +3135,7 @@ def format_offer_play_text(data: dict) -> str:
 
 def two_digit_token_to_offset(token) -> int:
     """
-    แปลงเลข 2 ตัว/เลขย่อเป็น offset จากฐานเริ่มต้น นะ๗ีะฟกฟหกฟกฟหกฟหกฟหกฟกหฟกหฟกฟหกฟหก
+    แปลงเลข 2 ตัว/เลขย่อเป็น offset จากฐานเริ่มต้น
     - 30 -> 30
     - 70 -> 70
     - 3  -> 30
