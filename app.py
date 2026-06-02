@@ -9502,12 +9502,32 @@ def create_match_from_pending(post, taker_entry):
     # สำรองทันทีหลังสร้างคู่ติดสำเร็จ กันบอทค้างก่อนส่ง Flex / ก่อนตอบกลับ LINE
     save_round_backup_db(reason="match_created")
 
-    # ส่ง Flex หาทั้งคู่แบบ async ทันที ไม่ sync profile ก่อน
-    push_flex_async(match["maker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["maker_id"]))
-    push_flex_async(match["taker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["taker_id"]))
-
-    # เงียบในกลุ่มเมื่อแผลสมบูรณ์
-    return None
+    # สูตรลับ Trigger-Reply (ฟรี 100% ไม่เสียโควต้า):
+    # แทนที่จะ Push หาผู้เล่น 2 คนตรงๆ (ซึ่งจะเสียโควต้า 2 ข้อความ)
+    # เราจะส่งข้อความแจ้งเตือนพร้อมปุ่มลิงก์ LINE URL Scheme กลับเข้าไปในกลุ่ม (ซึ่งเป็นการ Reply ฟรี 100%)
+    # เพื่อให้ผู้เล่นทั้งสองคนแตะลิงก์เข้ามาเปิดการ์ดเฉพาะตัวของตนเองในแชทส่วนตัวแบบฟรีๆ
+    bot_id = "901qfixd"  # ID ของบอทคุณ
+    url_scheme = f"https://line.me/R/oaMessage/@{bot_id}/?ดูการ์ด_{match_id}"
+    
+    # ดึงชื่อเพื่อใช้แสดงผลในกลุ่ม
+    maker_disp = match["maker_name"]
+    taker_disp = match["taker_name"]
+    play_text = format_match_play_text(match)
+    amount_text = f"{match['amount']:,}"
+    order_no = match["order_no"]
+    
+    match_group_msg = (
+        f"🎉 จับคู่สำเร็จ! Order #{order_no}\n"
+        f"⚔️ {play_text}\n"
+        f"💰 ยอดเล่น: {amount_text} บาท\n\n"
+        f"📌 [ผู้โพสต์]: {maker_disp}\n"
+        f"🎯 [ผู้ติด]: {taker_disp}\n\n"
+        f"👇 แตะลิงก์ด้านล่างเพื่อรับการ์ดจับคู่ในแชทส่วนตัว (ฟรี 100%)\n"
+        f"🔗 {url_scheme}"
+    )
+    
+    # ส่งข้อความแจ้งเตือนจับคู่สำเร็จกลับไปในกลุ่มหน้าบ้าน
+    return match_group_msg
 
 
 def request_cancel(match_id, requester_id):
@@ -12890,6 +12910,24 @@ def handle_message(event):
 
         reply_text(event.reply_token, admin_command_help_text())
         return
+
+    # ดักจับคำสั่ง ดูการ์ด_{match_id} สำหรับระบบ Trigger-Reply (ฟรี 100%)
+    card_match = re.match(r"^ดูการ์ด_([a-f0-9\-]+)$", text, re.IGNORECASE)
+    if card_match:
+        target_match_id = card_match.group(1)
+        match_obj = MATCHES.get(target_match_id)
+        if match_obj:
+            if user_id in [match_obj["maker_id"], match_obj["taker_id"]]:
+                # ส่ง FLEX แบบเจาะจงมุมมองของคนกด ผ่าน Reply API (ฟรี 100% ไม่เสียโควต้า)
+                flex_content = matched_flex_for_user(match_obj, user_id)
+                reply_flex(event.reply_token, "จับคู่สำเร็จ", flex_content)
+                return
+            else:
+                reply_text(event.reply_token, "❌ คุณไม่ใช่คู่แข่งขันของรายการนี้")
+                return
+        else:
+            reply_text(event.reply_token, "❌ ไม่พบข้อมูลการจับคู่รายการนี้")
+            return
 
     # UID / GETID / เช็คยอด
     if text.upper() == "UID":
