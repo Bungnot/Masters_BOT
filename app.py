@@ -94,10 +94,10 @@ EASYSLIP_API_URL = os.getenv("EASYSLIP_API_URL", "https://developer.easyslip.com
 EASYSLIP_ACCOUNT_NUMBER = os.getenv("EASYSLIP_ACCOUNT_NUMBER", "").strip()
 EASYSLIP_ACCOUNT_NAME_TH = os.getenv("EASYSLIP_ACCOUNT_NAME_TH", "").strip()
 EASYSLIP_ACCOUNT_NAME_EN = os.getenv("EASYSLIP_ACCOUNT_NAME_EN", "").strip()
-EASYSLIP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_CONNECT_TIMEOUT_SECONDS", "5"))
-EASYSLIP_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_TIMEOUT_SECONDS", "20"))
-EASYSLIP_API_RETRIES = int(os.getenv("EASYSLIP_API_RETRIES", "2"))
-EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SECONDS", "1.0"))
+EASYSLIP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_CONNECT_TIMEOUT_SECONDS", "3"))
+EASYSLIP_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_TIMEOUT_SECONDS", "6"))
+EASYSLIP_API_RETRIES = int(os.getenv("EASYSLIP_API_RETRIES", "1"))
+EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SECONDS", "0"))
 EASYSLIP_DEBUG_MODE = os.getenv("EASYSLIP_DEBUG_MODE", "1") == "1"
 # ตรวจภาพก่อนส่งเข้า EasySlip ด้วย QR gate
 # ปิดเป็นค่าเริ่มต้น เพราะรูปสลิปจาก LINE บางครั้งถูกบีบอัด/QR เล็ก ทำให้ OpenCV ตรวจไม่เจอและบอทเงียบ
@@ -5724,10 +5724,10 @@ def slip2go_reject_flex(data=None, reject_type: str = None, reject_msg: str = No
 
     status_map = {
         "receiver": {
-            "title": "❌ บัญชีผู้รับไม่ถูกต้อง",
-            "status": "บัญชีไม่ตรง",
-            "reason": "บัญชีผู้รับในสลิปไม่ตรงกับบัญชีร้านที่ตั้งไว้",
-            "suggestion": "ตรวจว่าลูกค้าโอนเข้าบัญชีร้านถูกต้อง หรือให้ส่งสลิปของรายการที่โอนเข้าบัญชีร้านจริง",
+            "title": "❌ ไม่ใช่บัญชีของกลุ่มเรา",
+            "status": "โอนผิดบัญชี",
+            "reason": "บัญชีปลายทางในสลิปไม่ตรงกับบัญชีของกลุ่ม กรุณาตรวจสอบเลขบัญชีที่โอนอีกครั้ง",
+            "suggestion": "พิมพ์ บช ในแชทส่วนตัวเพื่อดูบัญชีที่ถูกต้องของกลุ่ม แล้วส่งสลิปใหม่ที่โอนเข้าบัญชีกลุ่มเท่านั้น",
         },
         "amount": {
             "title": "❌ ยอดโอนไม่ตรงเงื่อนไข",
@@ -5860,7 +5860,9 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
             err_type = debug.get("error_type", "")
             if err_type in ("timeout", "connection_error"):
                 return slip_pending_retry_flex(
-                    "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน ระบบยังไม่เติมเครดิตและยังไม่บันทึกว่าสลิปนี้ถูกใช้แล้ว"
+                    "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน\n\n"
+                    "⚠️ หากโอนถูกบัญชี: รอ 2-3 นาที แล้วส่งสลิปใหม่อีกครั้ง\n"
+                    "⚠️ หากโอนผิดบัญชี: พิมพ์ บช เพื่อดูบัญชีที่ถูกต้องของกลุ่ม"
                 )
 
         # V2: 404 + SLIP_PENDING = ธ.กรุงเทพยังไม่ sync
@@ -5910,7 +5912,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
                 print(f"EASYSLIP RECEIVER FAIL: bank={acct.get('bank')}, proxy={acct.get('proxy')}, name={acct.get('name')}, expected_no={EASYSLIP_ACCOUNT_NUMBER!r}, expected_name={EASYSLIP_ACCOUNT_NAME_TH!r}")
             except Exception:
                 pass
-        return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
+        return slip2go_reject_flex(data, "receiver", "บัญชีปลายทางในสลิปไม่ใช่บัญชีของกลุ่มเรา")
 
     # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ───────────────────────────────────
     with STATE_LOCK:
