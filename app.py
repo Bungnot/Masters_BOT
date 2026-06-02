@@ -12301,6 +12301,7 @@ def create_post_multi(event, offers_list):
 
 
 create_post = synchronized_state(create_post)
+create_post_multi = synchronized_state(create_post_multi)
 handle_confirm = synchronized_state(handle_confirm)
 create_match_from_pending = synchronized_state(create_match_from_pending)
 request_cancel = synchronized_state(request_cancel)
