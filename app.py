@@ -13674,7 +13674,7 @@ def handle_message(event):
         return user
 
     # ถ้าลูกค้า reply โพสต์แผล/ข้อความติดด้วยคำที่ไม่ใช่คีย์
-    # ให้แจ้งวิธีใช้ทันทีและไม่บันทึกสถานะ เพื่อให้กลับไป reply ด้วย ต/ติด ได้ตามปกติ
+    # ให้แจ้งวิธีใช้ทันทีและไม่บันทึกสถานะ เพื่อให้กลับไป reply ด้วย ต/ติด ได้ตามปกติd
     invalid_reply_msg = invalid_play_reply_warning(event, text)
     if invalid_reply_msg:
         reply_problem(event, invalid_reply_msg)
