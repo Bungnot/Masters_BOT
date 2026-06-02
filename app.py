@@ -11910,6 +11910,11 @@ def admin_webhook_page():
     webhook_url = f"{public_url}/callback"
     token_param = request.args.get("token", "")
 
+    # encode token ใน data-attribute แทนการฝังใน JS ตรงๆ กัน SyntaxError
+    import json as _json
+    token_json = _json.dumps(token_param)
+    webhook_url_json = _json.dumps(webhook_url)
+
     html = f"""<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -11929,12 +11934,11 @@ def admin_webhook_page():
     .btn-set {{ background: #2563eb; color: white; }}
     .btn-set:hover {{ background: #1d4ed8; }}
     .btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
-    .result {{ margin-top: 20px; padding: 16px; border-radius: 10px; font-size: 14px; display: none; }}
+    .result {{ margin-top: 20px; padding: 16px; border-radius: 10px; font-size: 14px; white-space: pre-wrap; display: none; }}
     .result.success {{ background: #14532d; border: 1px solid #16a34a; color: #86efac; }}
     .result.error {{ background: #4c0519; border: 1px solid #dc2626; color: #fca5a5; }}
     .result.info {{ background: #1e3a5f; border: 1px solid #2563eb; color: #93c5fd; }}
     .label {{ font-size: 12px; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }}
-    .divider {{ border: none; border-top: 1px solid #334155; margin: 20px 0; }}
   </style>
 </head>
 <body>
@@ -11943,22 +11947,22 @@ def admin_webhook_page():
     <p class="subtitle">จัดการ Webhook URL สำหรับ LINE OA</p>
 
     <div class="label">Webhook URL ปัจจุบัน</div>
-    <div class="url-box" id="webhookUrl">{webhook_url}</div>
+    <div class="url-box">{webhook_url}</div>
 
     <button class="btn btn-verify" onclick="verifyWebhook()">✅ ทดสอบ / ยืนยัน Webhook</button>
-    <button class="btn btn-set" onclick="setWebhook()">🔗 ตั้งค่า Webhook URL ใหม่</button>
+    <button class="btn btn-set" onclick="setWebhook()" style="margin-top:12px">🔗 ตั้งค่า Webhook URL ใหม่</button>
 
     <div class="result" id="result"></div>
   </div>
 
   <script>
-    const TOKEN = "{token_param}";
-    const WEBHOOK_URL = "{webhook_url}";
+    const TOKEN = {token_json};
+    const WEBHOOK_URL = {webhook_url_json};
 
     async function verifyWebhook() {{
       showResult("⏳ กำลังทดสอบ...", "info");
       try {{
-        const res = await fetch("/admin/webhook/verify?token=" + TOKEN, {{ method: "POST" }});
+        const res = await fetch("/admin/webhook/verify?token=" + encodeURIComponent(TOKEN), {{ method: "POST" }});
         const data = await res.json();
         if (data.success) {{
           showResult("✅ Webhook ทำงานปกติ!\n\nstatus: " + data.statusCode + "\ntime: " + data.timestamp, "success");
@@ -11973,7 +11977,7 @@ def admin_webhook_page():
     async function setWebhook() {{
       showResult("⏳ กำลังตั้งค่า Webhook URL...", "info");
       try {{
-        const res = await fetch("/admin/webhook/set?token=" + TOKEN, {{ method: "POST" }});
+        const res = await fetch("/admin/webhook/set?token=" + encodeURIComponent(TOKEN), {{ method: "POST" }});
         const data = await res.json();
         if (data.ok) {{
           showResult("✅ ตั้งค่า Webhook URL สำเร็จ!\n\nURL: " + WEBHOOK_URL, "success");
