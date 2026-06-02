@@ -11896,6 +11896,151 @@ def admin_api_profit():
     return {"ok": True, "rounds": rounds, "total_profit": total}
 
 
+
+@app.route("/admin/webhook", methods=["GET"])
+def admin_webhook_page():
+    if not check_admin_token(request):
+        return """<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
+        <h2>🔒 Unauthorized</h2><p>ต้องใส่ token ที่ถูกต้อง</p>
+        <p><a href="/admin/webhook?token=YOUR_TOKEN">ใส่ token ใน URL</a></p>
+        </body></html>""", 401
+
+    public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+    webhook_url = f"{public_url}/callback"
+    token_param = request.args.get("token", "")
+
+    html = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔗 Webhook Manager</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }}
+    .card {{ background: #1e293b; border-radius: 16px; padding: 32px; max-width: 520px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }}
+    h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 6px; color: #f1f5f9; }}
+    .subtitle {{ font-size: 13px; color: #94a3b8; margin-bottom: 28px; }}
+    .url-box {{ background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 14px 16px; font-size: 13px; color: #38bdf8; word-break: break-all; margin-bottom: 24px; }}
+    .btn {{ width: 100%; padding: 14px; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; }}
+    .btn-verify {{ background: #16a34a; color: white; margin-bottom: 12px; }}
+    .btn-verify:hover {{ background: #15803d; }}
+    .btn-set {{ background: #2563eb; color: white; }}
+    .btn-set:hover {{ background: #1d4ed8; }}
+    .btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+    .result {{ margin-top: 20px; padding: 16px; border-radius: 10px; font-size: 14px; display: none; }}
+    .result.success {{ background: #14532d; border: 1px solid #16a34a; color: #86efac; }}
+    .result.error {{ background: #4c0519; border: 1px solid #dc2626; color: #fca5a5; }}
+    .result.info {{ background: #1e3a5f; border: 1px solid #2563eb; color: #93c5fd; }}
+    .label {{ font-size: 12px; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }}
+    .divider {{ border: none; border-top: 1px solid #334155; margin: 20px 0; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🔗 LINE Webhook Manager</h1>
+    <p class="subtitle">จัดการ Webhook URL สำหรับ LINE OA</p>
+
+    <div class="label">Webhook URL ปัจจุบัน</div>
+    <div class="url-box" id="webhookUrl">{webhook_url}</div>
+
+    <button class="btn btn-verify" onclick="verifyWebhook()">✅ ทดสอบ / ยืนยัน Webhook</button>
+    <button class="btn btn-set" onclick="setWebhook()">🔗 ตั้งค่า Webhook URL ใหม่</button>
+
+    <div class="result" id="result"></div>
+  </div>
+
+  <script>
+    const TOKEN = "{token_param}";
+    const WEBHOOK_URL = "{webhook_url}";
+
+    async function verifyWebhook() {{
+      showResult("⏳ กำลังทดสอบ...", "info");
+      try {{
+        const res = await fetch("/admin/webhook/verify?token=" + TOKEN, {{ method: "POST" }});
+        const data = await res.json();
+        if (data.success) {{
+          showResult("✅ Webhook ทำงานปกติ!\n\nstatus: " + data.statusCode + "\ntime: " + data.timestamp, "success");
+        }} else {{
+          showResult("❌ ทดสอบไม่ผ่าน\n\n" + JSON.stringify(data, null, 2), "error");
+        }}
+      }} catch(e) {{
+        showResult("❌ เกิดข้อผิดพลาด: " + e.message, "error");
+      }}
+    }}
+
+    async function setWebhook() {{
+      showResult("⏳ กำลังตั้งค่า Webhook URL...", "info");
+      try {{
+        const res = await fetch("/admin/webhook/set?token=" + TOKEN, {{ method: "POST" }});
+        const data = await res.json();
+        if (data.ok) {{
+          showResult("✅ ตั้งค่า Webhook URL สำเร็จ!\n\nURL: " + WEBHOOK_URL, "success");
+        }} else {{
+          showResult("❌ ตั้งค่าไม่สำเร็จ\n\n" + JSON.stringify(data, null, 2), "error");
+        }}
+      }} catch(e) {{
+        showResult("❌ เกิดข้อผิดพลาด: " + e.message, "error");
+      }}
+    }}
+
+    function showResult(msg, type) {{
+      const el = document.getElementById("result");
+      el.style.display = "block";
+      el.className = "result " + type;
+      el.innerText = msg;
+    }}
+  </script>
+</body>
+</html>"""
+    return html
+
+
+@app.route("/admin/webhook/verify", methods=["POST"])
+def admin_webhook_verify():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    try:
+        public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+        webhook_url = f"{public_url}/callback"
+        resp = requests.post(
+            "https://api.line.me/v2/bot/channel/webhook/test",
+            headers={
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"webhook_endpoint": webhook_url},
+            timeout=(5, 10),
+        )
+        data = resp.json()
+        return {"success": data.get("success", False), "statusCode": data.get("statusCode"), "timestamp": data.get("timestamp"), "detail": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}, 500
+
+
+@app.route("/admin/webhook/set", methods=["POST"])
+def admin_webhook_set():
+    if not check_admin_token(request):
+        return {"error": "Unauthorized"}, 401
+    try:
+        public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
+        webhook_url = f"{public_url}/callback"
+        resp = requests.put(
+            "https://api.line.me/v2/bot/channel/webhook/endpoint",
+            headers={
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"webhook_endpoint": webhook_url},
+            timeout=(5, 10),
+        )
+        if resp.status_code == 200:
+            return {"ok": True, "webhook_url": webhook_url}
+        return {"ok": False, "status": resp.status_code, "body": resp.text[:500]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
