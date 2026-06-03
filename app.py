@@ -2883,6 +2883,7 @@ def admin_command_help_text() -> str:
         "- C @ชื่อไลน์ = เช็ก LINE / ID / ยอดเงินของคนที่แท็ก\n"
         "- CALL = ดูรายชื่อลูกค้าที่ระบบรู้จัก\n"
         "- เพิ่มแอดมิน @ชื่อไลน์ = เพิ่มแอดมินจากการ mention\n"
+        "- ลบแอดมิน <UID> = ลบแอดมินโดยระบุ UID\n"
         "- List / เช็คแอดมิน = ดูรายชื่อแอดมินทั้งหมด\n\n"
 
         "💰 เครดิต/กำไร\n"
@@ -8961,7 +8962,7 @@ def create_post(event, offer):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
     if not STATE["opened"]:
-        return "ยังไม่เปิดรอบ จึงไม่รับโพสต์"
+        return None  # บอทเงียบเมื่อรอบปิด ไม่แจ้งลูกค้า
 
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่รับโพสต์เพิ่ม"
@@ -9168,7 +9169,7 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
     if not STATE["opened"]:
-        return "ปิดอยู่ หรือยังไม่เปิดรอบ จึงไม่สามารถติดได้"
+        return None  # บอทเงียบเมื่อรอบปิด ไม่แจ้งลูกค้า
 
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่สามารถติดเพิ่มได้"
@@ -11083,6 +11084,67 @@ def add_admins_from_mentions(event, added_by_id: str):
     return "\n".join(lines)
 
 
+def is_remove_admin_command(text: str) -> bool:
+    """ตรวจคำสั่ง ลบแอดมิน <UID>"""
+    clean = (text or "").strip()
+    clean = re.sub(r"^[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]+", "", clean)
+    return re.match(r"^ลบแอดมิน(?:\s+|$)", clean) is not None
+
+
+def parse_remove_admin_uid(text: str):
+    """ดึง UID จากคำสั่ง ลบแอดมิน <UID> คืน None ถ้าไม่พบ"""
+    clean = (text or "").strip()
+    m = re.match(r"^ลบแอดมิน\s+(\S+)", clean)
+    return m.group(1).strip() if m else None
+
+
+def remove_admin_by_uid(target_uid: str) -> str:
+    """ลบแอดมินด้วย UID ตรงๆ"""
+    if not target_uid:
+        return (
+            "⚠️ ลบแอดมินไม่สำเร็จ\n\n"
+            "รูปแบบที่ใช้ได้:\n"
+            "ลบแอดมิน <UID>\n\n"
+            "ตัวอย่าง:\n"
+            "ลบแอดมิน Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n"
+            "ดู UID ได้จากคำสั่ง List / เช็คแอดมิน"
+        )
+
+    admins = DYNAMIC_ADMINS.get("admins", {}) if isinstance(DYNAMIC_ADMINS, dict) else {}
+    user = USERS.get(target_uid, {}) if isinstance(USERS, dict) else {}
+    target_name = (
+        (admins.get(target_uid) or {}).get("line_name")
+        or user.get("line_name")
+        or user.get("name")
+        or fallback_name(target_uid)
+    )
+
+    if target_uid in ADMIN_USER_IDS:
+        return (
+            f"⚠️ ไม่สามารถลบ {target_name} ได้\n\n"
+            "แอดมินนี้ถูกตั้งค่าใน .env\n"
+            "ต้องแก้ไข ADMIN_USER_IDS ใน .env โดยตรง"
+        )
+
+    if target_uid not in admins:
+        return (
+            f"⚠️ ไม่พบ UID นี้ในรายชื่อแอดมิน\n\n"
+            f"UID: {target_uid}\n\n"
+            "ดู UID ที่ถูกต้องได้จากคำสั่ง List / เช็คแอดมิน"
+        )
+
+    del admins[target_uid]
+    DYNAMIC_ADMINS["updated_at"] = datetime.now().isoformat()
+    save_admin_db()
+
+    return (
+        f"✅ ลบแอดมินเรียบร้อย\n\n"
+        f"ชื่อ: {target_name}\n"
+        f"UID: {target_uid}\n\n"
+        "บันทึกลง admins.json แล้ว"
+    )
+
+
 # ======================================================
 # Concurrency guard
 # ======================================================
@@ -12537,6 +12599,8 @@ def is_backoffice_relevant_text(text: str, user_id: str = None) -> bool:
     # จึงไม่ปล่อยผ่าน quiet mode สำหรับหลังบ้าน/คำสั่งแอดมิน
     if is_add_admin_command(raw):
         return True
+    if is_remove_admin_command(raw):
+        return True
     if is_admin_list_command(raw):
         return True
     if is_credit_check_mention_command(raw):
@@ -12863,6 +12927,15 @@ def handle_message(event):
         reply_text(event.reply_token, add_admins_from_mentions(event, user_id))
         return
 
+    if is_remove_admin_command(text):
+        if not can_use_backoffice_command(event, user_id):
+            reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะหลังบ้านหรือแอดมิน")
+            return
+
+        target_uid = parse_remove_admin_uid(text)
+        reply_text(event.reply_token, remove_admin_by_uid(target_uid))
+        return
+
     if is_admin_list_command(text):
         if not can_use_strict_backoffice_command(event):
             reply_text(event.reply_token, strict_backoffice_only_text("List / เช็คแอดมิน"))
@@ -13177,6 +13250,24 @@ def handle_message(event):
                 f"ค่ายนี้ยังมีรอบค้างอยู่: {camp_name}\n"
                 f"บิลห้ามทับชื่อค่ายเดิม เพื่อกันแจ้งผล/ย้อนผลผิดรอบ\n"
                 f"ให้ใช้ชื่อค่ายใหม่ หรือแจ้งผลค่ายเดิมให้จบก่อน"
+            )
+            return
+
+        # ตรวจว่ามีฐานใดเปิดอยู่ก่อน ถ้ามีต้องปิดก่อนเปิดรอบใหม่
+        opened_rounds = [
+            st for st in ROUNDS.values()
+            if st.get("opened") and not st.get("settled")
+        ]
+        if opened_rounds:
+            open_names = ", ".join(
+                st.get("camp_name") or f"ฐาน{st.get('base_no','?')}"
+                for st in opened_rounds
+            )
+            reply_text(
+                event.reply_token,
+                "❌ เปิดรอบไม่ได้\n\n"
+                f"ยังมีรอบที่เปิดอยู่: {open_names}\n\n"
+                "กรุณาปิดรอบนั้นก่อน แล้วค่อยเปิดรอบใหม่"
             )
             return
 
