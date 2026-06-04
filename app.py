@@ -191,6 +191,12 @@ BACKUP_COOLDOWN_SECONDS = 1.0
 STATE_LOCK = threading.RLock()
 FILE_LOCK = threading.RLock()
 
+# Lock สำหรับ POSTS, MATCHES, ROUNDS ป้องกัน race condition
+POSTS_LOCK = threading.RLock()
+MATCHES_LOCK = threading.RLock()
+ROUNDS_LOCK = threading.RLock()
+USERS_LOCK = threading.RLock()
+
 # กัน LINE retry / network duplicate ทำให้คำสั่งเดิมถูกคิดซ้ำ
 PROCESSED_MESSAGE_IDS = {}
 PROCESSED_MESSAGE_TTL_SECONDS = 600
@@ -2224,14 +2230,16 @@ def get_line_profile(user_id: str, group_id: str = None, room_id: str = None):
 
 def mark_message_processed(message_id: str) -> bool:
     """
-    คืน True ถ้า message_id นี้เคยประมวลผลแล้ว
-    ใช้กัน LINE webhook retry / duplicate ที่ทำให้คำสั่งเดียวถูกยิงซ้ำ
+    คืน True ถ้า message_id นี้เคยหลายประมวลผลแล้ว
+    ใช้กัน LINE webhook retry / duplicate ที่ทำให้คำสั่งเดิมถูกยิงซ้ำ
+    ป้องกัน race condition: ถ้า 2 threads ยิงข้อความเดิมกันพร้อมกัน ใช้ double-check
     """
     if not message_id:
         return False
 
     now_ts = time.time()
     with STATE_LOCK:
+        # ทำความสะอาดของช่องหมดกลุ่มหากว่า 1000 รายการ
         if len(PROCESSED_MESSAGE_IDS) > 1000:
             expired = [
                 mid for mid, ts in PROCESSED_MESSAGE_IDS.items()
@@ -2240,11 +2248,17 @@ def mark_message_processed(message_id: str) -> bool:
             for mid in expired:
                 PROCESSED_MESSAGE_IDS.pop(mid, None)
 
+        # Double-check: ตรวจสอบว่า message_id เคยหลายประมวลผลแล้ว
         if message_id in PROCESSED_MESSAGE_IDS:
             return True
 
-        PROCESSED_MESSAGE_IDS[message_id] = now_ts
-        return False
+        # ตรวจสอบว่าหาก message_id ว่างหลังก่อนประมวลผล
+        # ถ้าเปล่า None และประมวลผลสอบครั้ง แล้วไม่ต้องประมวลผล
+        if PROCESSED_MESSAGE_IDS.get(message_id) is None:
+            PROCESSED_MESSAGE_IDS[message_id] = now_ts
+            return False
+        
+        return True
 
 
 def update_user_profile_from_line(user_id: str, group_id: str = None, room_id: str = None, now_ts: int = None):
@@ -9080,96 +9094,98 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
         return create_match_from_pending(pending_post, pending_taker)
 
     # B ตอบกลับโพสต์ต้นทางของ A
-    post = POSTS.get(quoted_message_id)
-    if not post:
-        # ถ้า quote ข้อความทั่วไปในกลุ่มแล้วพิมพ์ ต/ติด ให้ถือว่าไม่ใช่แผลเล่นและเงียบ
-        if QUIET_GROUP_MODE and QUIET_IGNORE_WRONG_REPLY:
+    # ใช้ POSTS_LOCK ครอบทั้งส่วนการอ่าน/เขียน POSTS เพื่อป้องกัน race condition
+    with POSTS_LOCK:
+        post = POSTS.get(quoted_message_id)
+        if not post:
+            # ถ้า quote ข้อความทั่วไปในกลุ่มแล้วพิมพ์ ต/ติด ให้ถือว่าไม่ใช่แผลเล่นและเงียบ
+            if QUIET_GROUP_MODE and QUIET_IGNORE_WRONG_REPLY:
+                return None
+            return "ไม่พบโพสต์ต้นทาง หรือโพสต์นี้ไม่ใช่รายการที่ระบบไว้"
+
+        if post.get("round_id") != STATE.get("round_id"):
+            return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
+
+        # โพสต์ 1 โพสต์ใช้เป็น "ราคาแม่แบบ" ได้เรื่อย ๆ
+        # หลังจับคู่สำเร็จแล้ว ห้ามปิดโพสต์อัตโนมัติ เพราะ C/D/E ต้องมาติดโพสต์เดิมต่อได้
+        post_status = post.get("status", "open")
+        if post_status not in ["open", "closed"]:
+            return "โพสต์นี้ไม่เปิดรับแล้ว"
+
+        if post_status == "closed":
+            # รองรับโพสต์เก่าที่เคยถูกโค้ดเดิมปิดเพราะ remaining_amount = 0
+            post["status"] = "open"
+
+        if user_id == post["maker_id"]:
+            # เจ้าองโพสต์ต้องไป reply ข้อความ ติด ของคนที่มาติดเท่านั้น
+            # ถ้า reply โพสต์ตัวเองผิดตำแหน่ง ให้เงียบเพื่อลดข้อความรกกลุ่ม
+            if QUIET_GROUP_MODE and QUIET_IGNORE_WRONG_REPLY:
+                return None
+            return "เจ้าองโพสต์ต้องยืนยันยืนยันโดยตอบกลับข้อความ ติด ของคนที่มาติด"
+
+        post_amount = int(post.get("amount", 0) or 0)
+        if post_amount <= 0:
+            return "โพสต์นี้ยอดไม่ถูกต้อง ไม่สามารถติดได้"
+
+        take_amount = int(requested_amount) if requested_amount is not None else post_amount
+
+        if take_amount <= 0:
+            return "ยอดติดต้องมากกว่า 0"
+
+        if take_amount > post_amount:
+            return (
+                f"ติดไม่สำเร็จ\n"
+                f"ยอดที่ต้องการติด: {take_amount:,}\n"
+                f"ยอดที่โพสต์ไว้: {post_amount:,}\n"
+                f"ให้พิมใหม่ เช่น ต{post_amount}"
+            )
+
+        # เช็กเรดิตคนมาติดทันที่ตั้งแต่ข้อความ ต/ติด
+        # เดิม: ถ้าพิมพ์ "ติด" เฉย ๆ ระบบจะสร้าง pending ก่อน แล้วค่อยไปเช็กตอนเจ้าของโพสต์ยืนยัน
+        # ใหม่: เรดิตต้องพอเท่ากันยอดที่จะติดก่อน จึงค่อยไปสร้าง pending เพื่อกันคนเรดิต 0 มาค้างรายการ
+        current_credit = user_credit_amount(user)
+        if current_credit < take_amount:
+            return insufficient_credit_warning(
+                user,
+                take_amount,
+                play_text=format_post_play_text(post),
+                is_chty=bool(post.get("only_when_no_price")),
+                action="ติดรายการ",
+            )
+
+        # ถ้าคนเดิมติดโพสต์เดิมซ้ำก่อนเจ้าของโพสต์ยืนยัน
+        # ห้ามสร้าง pending ซ้ำ แต่ต้องอัปเดต message id เป็นข้อความล่าสุด
+        # เพื่อใหเจ้าของโพสต์ Reply ข้อความ "ติด" ล่าสุดแล้วยืนยันได้จริง
+        existing_pending = None
+        for t in post.get("takers", []):
+            if t.get("taker_id") == user_id and is_waiting_status(t.get("status")):
+                existing_pending = t
+                break
+
+        if existing_pending:
+            existing_pending["taker_reply_message_id"] = current_msg_id
+            existing_pending["amount"] = take_amount
+            existing_pending["status"] = "pending"
+            # ถ้าเคยอยู่ในขั้น counter_pending แล้ว B กลับไป reply โพสต์ต้นทางใหม่ ให้เริ่มรอยื่นยันใหม่
+            existing_pending.pop("counter_amount", None)
+            existing_pending.pop("counter_message_id", None)
+            existing_pending.pop("counter_by", None)
+            existing_pending.pop("last_counter_text", None)
+            existing_pending["updated_at"] = now_text()
+            existing_pending["last_confirm_text"] = getattr(event.message, "text", "")
+            save_round_backup_db(reason="pending_updated")
+            # เงียบ: ถือว่าอัปเดตรายการรอยื่นยันเรียบร้อยแล้ว
             return None
-        return "ไม่พบโพสต์ต้นทาง หรือโพสต์นี้ไม่ใช่รายการที่ระบบรับไว้"
 
-    if post.get("round_id") != STATE.get("round_id"):
-        return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
-
-    # โพสต์ 1 โพสต์ใช้เป็น "ราคาแม่แบบ" ได้เรื่อย ๆ
-    # หลังจับคู่สำเร็จแล้ว ห้ามปิดโพสต์อัตโนมัติ เพราะ C/D/E ต้องมาติดโพสต์เดิมต่อได้
-    post_status = post.get("status", "open")
-    if post_status not in ["open", "closed"]:
-        return "โพสต์นี้ไม่เปิดรับแล้ว"
-
-    if post_status == "closed":
-        # รองรับโพสต์เก่าที่เคยถูกโค้ดเดิมปิดเพราะ remaining_amount = 0
-        post["status"] = "open"
-
-    if user_id == post["maker_id"]:
-        # เจ้าของโพสต์ต้องไป reply ข้อความ ติด ของคนที่มาติดเท่านั้น
-        # ถ้า reply โพสต์ตัวเองผิดตำแหน่ง ให้เงียบเพื่อลดข้อความรกกลุ่ม
-        if QUIET_GROUP_MODE and QUIET_IGNORE_WRONG_REPLY:
-            return None
-        return "เจ้าของโพสต์ต้องยืนยันโดยตอบกลับข้อความ ติด ของคนที่มาติด"
-
-    post_amount = int(post.get("amount", 0) or 0)
-    if post_amount <= 0:
-        return "โพสต์นี้ยอดไม่ถูกต้อง ไม่สามารถติดได้"
-
-    take_amount = int(requested_amount) if requested_amount is not None else post_amount
-
-    if take_amount <= 0:
-        return "ยอดติดต้องมากกว่า 0"
-
-    if take_amount > post_amount:
-        return (
-            f"ติดไม่สำเร็จ\n"
-            f"ยอดที่ต้องการติด: {take_amount:,}\n"
-            f"ยอดที่โพสต์ไว้: {post_amount:,}\n"
-            f"ให้พิมพ์ใหม่ เช่น ต{post_amount}"
-        )
-
-    # เช็กเครดิตคนมาติดทันทีตั้งแต่ข้อความ ต/ติด
-    # เดิม: ถ้าพิมพ์ "ติด" เฉย ๆ ระบบจะสร้าง pending ก่อน แล้วค่อยไปเช็กตอนเจ้าของโพสต์ยืนยัน
-    # ใหม่: เครดิตต้องพอเท่ากับยอดที่จะติดก่อน จึงค่อยสร้าง pending เพื่อกันคนเครดิต 0 มาค้างรายการ
-    current_credit = user_credit_amount(user)
-    if current_credit < take_amount:
-        return insufficient_credit_warning(
-            user,
-            take_amount,
-            play_text=format_post_play_text(post),
-            is_chty=bool(post.get("only_when_no_price")),
-            action="ติดรายการ",
-        )
-
-    # ถ้าคนเดิมติดโพสต์เดิมซ้ำก่อนเจ้าของโพสต์ยืนยัน
-    # ห้ามสร้าง pending ซ้ำ แต่ต้องอัปเดต message id เป็นข้อความล่าสุด
-    # เพื่อให้เจ้าของโพสต์ Reply ข้อความ "ติด" ล่าสุดแล้วยืนยันได้จริง
-    existing_pending = None
-    for t in post.get("takers", []):
-        if t.get("taker_id") == user_id and is_waiting_status(t.get("status")):
-            existing_pending = t
-            break
-
-    if existing_pending:
-        existing_pending["taker_reply_message_id"] = current_msg_id
-        existing_pending["amount"] = take_amount
-        existing_pending["status"] = "pending"
-        # ถ้าเคยอยู่ในขั้น counter_pending แล้ว B กลับไป reply โพสต์ต้นทางใหม่ ให้เริ่มรอยืนยันใหม่
-        existing_pending.pop("counter_amount", None)
-        existing_pending.pop("counter_message_id", None)
-        existing_pending.pop("counter_by", None)
-        existing_pending.pop("last_counter_text", None)
-        existing_pending["updated_at"] = now_text()
-        existing_pending["last_confirm_text"] = getattr(event.message, "text", "")
-        save_round_backup_db(reason="pending_updated")
-        # เงียบ: ถือว่าอัปเดตรายการรอยืนยันเรียบร้อยแล้ว
-        return None
-
-    post["takers"].append({
-        "taker_id": user_id,
-        "taker_reply_message_id": current_msg_id,
-        "amount": take_amount,
-        "status": "pending",
-        "created_at": now_text(),
-        "last_confirm_text": getattr(event.message, "text", ""),
-    })
-    save_round_backup_db(reason="pending_created")
+        post["takers"].append({
+            "taker_id": user_id,
+            "taker_reply_message_id": current_msg_id,
+            "amount": take_amount,
+            "status": "pending",
+            "created_at": now_text(),
+            "last_confirm_text": getattr(event.message, "text", ""),
+        })
+        save_round_backup_db(reason="pending_created")
 
     # เงียบเมื่อรับติดสำเร็จ
     return None
@@ -9179,7 +9195,9 @@ def create_match_from_pending(post, taker_entry):
     """
     สำเร็จ = ส่ง Flex แล้ว return None เพื่อให้บอทไม่ตอบในกลุ่ม
     error = return text
+    ใช้ MATCHES_LOCK และ USERS_LOCK เพื่อป้องกัน race condition
     """
+    # ตรวจสอบสถานะก่อนใช้ lock
     if taker_entry.get("status") != "pending":
         return "รายการนี้ถูกดำเนินการไปแล้ว"
 
@@ -9217,97 +9235,99 @@ def create_match_from_pending(post, taker_entry):
             f"ยอดที่โพสต์ไว้: {post_amount:,}"
         )
 
-    if user_credit_amount(maker) < amount:
-        return insufficient_credit_warning(
-            maker,
-            amount,
-            play_text=format_post_play_text(post),
-            is_chty=bool(post.get("only_when_no_price")),
-            action="ยืนยันจับคู่",
-        )
+    with USERS_LOCK:
+        if user_credit_amount(maker) < amount:
+            return insufficient_credit_warning(
+                maker,
+                amount,
+                play_text=format_post_play_text(post),
+                is_chty=bool(post.get("only_when_no_price")),
+                action="ยืนยันจับคู่",
+            )
 
-    if user_credit_amount(taker) < amount:
-        taker_entry["status"] = "rejected_credit"
-        taker_entry["rejected_at"] = now_text()
-        taker_entry["reject_reason"] = "taker_insufficient_credit_before_match"
-        return insufficient_credit_warning(
-            taker,
-            amount,
-            play_text=format_post_play_text(post),
-            is_chty=bool(post.get("only_when_no_price")),
-            action="ยืนยันจับคู่",
-        )
+        if user_credit_amount(taker) < amount:
+            taker_entry["status"] = "rejected_credit"
+            taker_entry["rejected_at"] = now_text()
+            taker_entry["reject_reason"] = "taker_insufficient_credit_before_match"
+            return insufficient_credit_warning(
+                taker,
+                amount,
+                play_text=format_post_play_text(post),
+                is_chty=bool(post.get("only_when_no_price")),
+                action="ยืนยันจับคู่",
+            )
 
-    # ล็อกเครดิตทั้งสองฝั่งก่อนรอแจ้งผล
-    maker["credit"] = user_credit_amount(maker) - amount
-    taker["credit"] = user_credit_amount(taker) - amount
-    save_user_db()
+        # ล็อกเรดิตทังสองฝั่งก่อนรอแจ้งผล
+        maker["credit"] = user_credit_amount(maker) - amount
+        taker["credit"] = user_credit_amount(taker) - amount
+        save_user_db()
 
-    match_id = str(uuid.uuid4())
-    order_no = get_next_order_no()
+    with MATCHES_LOCK:
+        match_id = str(uuid.uuid4())
+        order_no = get_next_order_no()
 
-    match = {
-        "match_id": match_id,
-        "round_id": post["round_id"],
-        "base_no": post.get("base_no") or STATE.get("base_no"),
-        "camp_name": post.get("camp_name") or STATE.get("camp_name"),
-        "chat_id": post.get("chat_id") or STATE.get("chat_id"),
-        "order_no": order_no,
-        "post_id": post["post_id"],
-        "posted_amount": int(post.get("amount", amount) or amount),
-        "maker_id": post["maker_id"],
-        "taker_id": taker_entry["taker_id"],
-        # เก็บ snapshot ชื่อ/เลขสมาชิก ณ ตอนจับคู่ เพื่อให้ดูย้อนหลังได้ว่ารอบนี้ใครติดกับใคร
-        # แม้ภายหลังผู้เล่นเปลี่ยนชื่อ LINE รายงานรอบนี้ยังมีข้อมูลเดิมอ้างอิงได้
-        "maker_name": maker.get("line_name") or maker.get("name") or fallback_name(post["maker_id"]),
-        "taker_name": taker.get("line_name") or taker.get("name") or fallback_name(taker_entry["taker_id"]),
-        "maker_member_no": maker.get("member_no"),
-        "taker_member_no": taker.get("member_no"),
-        "maker_side": post["maker_side"],
-        "raw_alias": post.get("raw_alias", ""),
-        "price_adjust_target": post.get("price_adjust_target"),
-        "price_adjust_min": post.get("price_adjust_min"),
-        "price_adjust_max": post.get("price_adjust_max"),
-        "custom_price_min": post.get("custom_price_min"),
-        "custom_price_max": post.get("custom_price_max"),
-        "is_two_digit_price": post.get("is_two_digit_price", False),
-        "two_digit_min_token": post.get("two_digit_min_token"),
-        "two_digit_max_token": post.get("two_digit_max_token"),
-        "is_custom_price": post.get("is_custom_price", False),
-        "only_when_no_price": post.get("only_when_no_price", False),
-        "plus": post["plus"],
-        "amount": amount,
-        "status": "matched",
-        "created_at": now_text(),
-        "settled_at": None,
-        "result": None,
-        "winning_side": None,
-        "cancel_requested": False,
-        "cancel_requested_by": None,
-        "cancel_requested_at": None,
-        "cancel_rejected": False,
-        "cancel_rejected_by": None,
-        "cancel_rejected_at": None,
-    }
+        match = {
+            "match_id": match_id,
+            "round_id": post["round_id"],
+            "base_no": post.get("base_no") or STATE.get("base_no"),
+            "camp_name": post.get("camp_name") or STATE.get("camp_name"),
+            "chat_id": post.get("chat_id") or STATE.get("chat_id"),
+            "order_no": order_no,
+            "post_id": post["post_id"],
+            "posted_amount": int(post.get("amount", amount) or amount),
+            "maker_id": post["maker_id"],
+            "taker_id": taker_entry["taker_id"],
+            # เก็บ snapshot ชื่อ/เลขสมาชิก ณ ตอนจับคู่ เพื่อใหดูย้อนหลังได้ว่ารอบนี้ใครติดกับใคร
+            # แม้ภายหลังผู้เล่นเปลี่ยนชื่อ LINE รายงานรอบนี้ยังมีข้อมูลเดิมอ้างอิงคือ
+            "maker_name": maker.get("line_name") or maker.get("name") or fallback_name(post["maker_id"]),
+            "taker_name": taker.get("line_name") or taker.get("name") or fallback_name(taker_entry["taker_id"]),
+            "maker_member_no": maker.get("member_no"),
+            "taker_member_no": taker.get("member_no"),
+            "maker_side": post["maker_side"],
+            "raw_alias": post.get("raw_alias", ""),
+            "price_adjust_target": post.get("price_adjust_target"),
+            "price_adjust_min": post.get("price_adjust_min"),
+            "price_adjust_max": post.get("price_adjust_max"),
+            "custom_price_min": post.get("custom_price_min"),
+            "custom_price_max": post.get("custom_price_max"),
+            "is_two_digit_price": post.get("is_two_digit_price", False),
+            "two_digit_min_token": post.get("two_digit_min_token"),
+            "two_digit_max_token": post.get("two_digit_max_token"),
+            "is_custom_price": post.get("is_custom_price", False),
+            "only_when_no_price": post.get("only_when_no_price", False),
+            "plus": post["plus"],
+            "amount": amount,
+            "status": "matched",
+            "created_at": now_text(),
+            "settled_at": None,
+            "result": None,
+            "winning_side": None,
+            "cancel_requested": False,
+            "cancel_requested_by": None,
+            "cancel_requested_at": None,
+            "cancel_rejected": False,
+            "cancel_rejected_by": None,
+            "cancel_rejected_at": None,
+        }
 
-    MATCHES[match_id] = match
+        MATCHES[match_id] = match
 
-    taker_entry["status"] = "matched"
-    taker_entry["match_id"] = match_id
-    taker_entry["matched_at"] = now_text()
-    taker_entry.pop("counter_amount", None)
-    taker_entry.pop("counter_message_id", None)
-    taker_entry.pop("counter_by", None)
+        taker_entry["status"] = "matched"
+        taker_entry["match_id"] = match_id
+        taker_entry["matched_at"] = now_text()
+        taker_entry.pop("counter_amount", None)
+        taker_entry.pop("counter_message_id", None)
+        taker_entry.pop("counter_by", None)
 
-    # ไม่หัก remaining_amount และไม่ปิดโพสต์หลังจับคู่
-    # 1 โพสต์ = แม่แบบรายการ สามารถให้คนอื่นมาติดซ้ำได้เรื่อย ๆ จนกว่าจะปิดรอบ/เปลี่ยนค่าย/แจ้งผล
-    post["remaining_amount"] = int(post.get("amount", amount) or amount)
-    post["status"] = "open"
+        # ไม่หัก remaining_amount และไม่ปิดโพสต์หลังจับคู่
+        # 1 โพสต์ = แม่แบบรายการ สามารถใหคนอื่นมาติดซ้ำได้เรื่อย ๆ จนกว่าจะปิดรอบ/เปลี่ยนค่าย/แจ้งผล
+        post["remaining_amount"] = int(post.get("amount", amount) or amount)
+        post["status"] = "open"
 
-    # สำรองทันทีหลังสร้างคู่ติดสำเร็จ กันบอทค้างก่อนส่ง Flex / ก่อนตอบกลับ LINE
-    save_round_backup_db(reason="match_created")
+        # สำรองทันที่หลังสร้างคู่ติดสำเร็จ กันบอทค้างก่อนส่ง Flex / ก่อนตอบกลับ LINE
+        save_round_backup_db(reason="match_created")
 
-    # ส่ง Flex หาทั้งคู่แบบ async ทันที ไม่ sync profile ก่อน
+    # ส่ง Flex หาทั้งคู่แบบ async ทันที่ ไม่ sync profile ก่อน
     push_flex_async(match["maker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["maker_id"]))
     push_flex_async(match["taker_id"], "จับคู่สำเร็จ", matched_flex_for_user(match, match["taker_id"]))
 
