@@ -10938,14 +10938,7 @@ def admin_list_report() -> str:
             or user.get("name")
             or fallback_name(uid)
         )
-        member_no = info.get("member_no") or user.get("member_no") or "-"
-        added_at = info.get("added_at") or "-"
-        added_by_name = info.get("added_by_name") or "-"
-        rows.append(
-            f"{len(rows) + 1}. {name}\n"
-            f"   ID สมาชิก: {member_no} | ที่มา: {source} | UID: {uid}\n"
-            f"   เพิ่มเมื่อ: {added_at} | เพิ่มโดย: {added_by_name}"
-        )
+        rows.append(f"{len(rows) + 1}. {name} | UID: {uid}")
 
     for uid in sorted(ADMIN_USER_IDS):
         display_admin_row(uid, ".env")
@@ -10966,9 +10959,8 @@ def admin_list_report() -> str:
         )
 
     return (
-        "📋 รายชื่อแอดมินทั้งหมด\n"
-        f"รวม {len(rows)} คน | .env {total_env} คน | admins.json {total_dynamic} คน\n\n"
-        + "\n\n".join(rows)
+        f"📋 รายชื่อแอดมิน {len(rows)} คน\n\n"
+        + "\n".join(rows)
     )
 
 
