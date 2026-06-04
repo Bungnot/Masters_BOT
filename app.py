@@ -1535,7 +1535,7 @@ def restore_round_backup_db():
 restore_round_backup_db()
 
 # ฝั่งช่างไล่ / ชนะ
-CHASE_ALIASES = ["ชล", "ช่างไล่", "ล", "ไล","ไล่"]
+CHASE_ALIASES = ["ชล", "ช่างไล่","ใล่","ช่างใล่", "ล", "ไล","ไล่"]
 
 # ฝั่งช่างถอย / แพ้
 RETREAT_ALIASES = ["ชถ", "ชย", "ยั่ง", "ถอย", "ช่างรับ", "รับช่าง","รับ", "ช่างถอย", "ยั้ง", "ช่างยั้ง", "ย", "ถ"]
@@ -2890,7 +2890,7 @@ def is_rules_request(text: str) -> bool:
     return clean in {"กต", "กติกา"}
 
 
-RULES_IMAGE_URL = "https://img2.pic.in.th/26d02e16-f7cf-403f-92ed-2a8eed65d8d1.png"
+RULES_IMAGE_URL = "https://img2.pic.in.th/b6b4bb4c-aaef-4391-b1e7-a1cea2ffd5fa.png"
 
 
 def rules_flex() -> dict:
@@ -6745,6 +6745,7 @@ def parse_confirm_command(text):
         "ต", "ติด", "ครับ", "เค", "จ้า", "ติดจ้า",
         "ตต", "ตด", "ตอด", "ตอก", "จ", "ติดครับ", "ติดด", "ติก",
         "ตอน","ตาม","แตก","ต้อง","ตัวเอง","ตืด","ตตต","ตื่น","ตัด",
+        "ตู้", "ต้น","ชต","จึก","ตึก","ตั้ง",
     }
 
     if clean in confirm_keywords:
