@@ -99,6 +99,21 @@ EASYSLIP_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_TIMEOUT_SECONDS", "20"))
 EASYSLIP_API_RETRIES = int(os.getenv("EASYSLIP_API_RETRIES", "2"))
 EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SECONDS", "1.0"))
 EASYSLIP_DEBUG_MODE = os.getenv("EASYSLIP_DEBUG_MODE", "1") == "1"
+
+# รายชื่อบัญชีที่อนุญาตให้เติมออโต้ (format: account_no|name_th|name_en|bank;...)
+AUTO_TOPUP_ACCOUNTS_STR = os.getenv("AUTO_TOPUP_ACCOUNTS", "").strip()
+AUTO_TOPUP_ACCOUNTS_LIST = []
+if AUTO_TOPUP_ACCOUNTS_STR:
+    for acc_str in AUTO_TOPUP_ACCOUNTS_STR.split(";"):
+        parts = acc_str.split("|")
+        if len(parts) >= 3:
+            AUTO_TOPUP_ACCOUNTS_LIST.append({
+                "account_no": parts[0].strip(),
+                "name_th": parts[1].strip(),
+                "name_en": parts[2].strip(),
+                "bank": parts[3].strip() if len(parts) > 3 else ""
+            })
+
 # ตรวจภาพก่อนส่งเข้า EasySlip ด้วย QR gate
 # ปิดเป็นค่าเริ่มต้น เพราะรูปสลิปจาก LINE บางครั้งถูกบีบอัด/QR เล็ก ทำให้ OpenCV ตรวจไม่เจอและบอทเงียบ
 SLIP_IMAGE_QR_GATE_ENABLED = os.getenv("SLIP_IMAGE_QR_GATE_ENABLED", "0") == "1"
@@ -551,6 +566,17 @@ def next_available_base_no(chat_id: str = None) -> str:
     while str(i) in used:
         i += 1
     return str(i)
+
+
+def get_any_opened_round():
+    """
+    ตรวจสอบว่ามีฐานใดเปิดอยู่หรือไม่
+    คืน (base_no, camp_name, state) ถ้ามีฐานเปิด หรือ (None, None, None) ถ้าไม่มี
+    """
+    for base_no, state in ROUNDS.items():
+        if state.get("opened") and state.get("round_id"):
+            return (base_no, state.get("camp_name"), state)
+    return (None, None, None)
 
 
 def select_base_for_new_round(chat_id: str = None):
@@ -1531,8 +1557,67 @@ def restore_round_backup_db():
         return False
 
 
+def refund_all_pending_matches():
+    """
+    คืนบิลอัตโนมัติตอนเริ่มบอท
+    - ค้นหาบิล status = "matched" ที่ยังไม่แจ้งผล (settled = False)
+    - คืนเครดิตให้ Maker และ Taker
+    - เปลี่ยนสถานะบิลเป็น "refunded"
+    """
+    refunded_count = 0
+    refunded_amount = 0
+    
+    try:
+        with MATCHES_LOCK:
+            for match_id, match in list(MATCHES.items()):
+                # ตรวจสอบว่าบิลยังไม่แจ้งผล และสถานะเป็น matched
+                if match.get("status") != "matched":
+                    continue
+                
+                # ค้นหารอบที่บิลนี้อยู่
+                round_id = match.get("round_id")
+                round_state = get_state_by_round_id(round_id)
+                if not round_state or round_state.get("settled"):
+                    continue
+                
+                # คืนเครดิตให้ Maker
+                maker_id = match.get("maker_id")
+                amount = match.get("amount", 0)
+                if maker_id and amount > 0:
+                    with USERS_LOCK:
+                        maker = USERS.get(maker_id)
+                        if maker:
+                            maker["credit"] = user_credit_amount(maker) + amount
+                
+                # คืนเครดิตให้ Taker
+                taker_id = match.get("taker_id")
+                if taker_id and amount > 0:
+                    with USERS_LOCK:
+                        taker = USERS.get(taker_id)
+                        if taker:
+                            taker["credit"] = user_credit_amount(taker) + amount
+                
+                # เปลี่ยนสถานะบิลเป็น "refunded"
+                match["status"] = "refunded"
+                match["refunded_at"] = now_text()
+                refunded_count += 1
+                refunded_amount += amount
+        
+        # บันทึกข้อมูลผู้ใช้ที่อัปเดต
+        if refunded_count > 0:
+            with USERS_LOCK:
+                save_user_db()
+            print(f"[REFUND] Refunded {refunded_count} matches, total amount: {refunded_amount:,}")
+    
+    except Exception as e:
+        print(f"[REFUND ERROR] {e}")
+
+
 # เรียกกู้คืนทันทีตอนโหลดไฟล์ ก่อน webhook เริ่มรับงาน
 restore_round_backup_db()
+
+# คืนบิลค้างอัตโนมัติตอนเริ่มบอท
+refund_all_pending_matches()
 
 # ฝั่งช่างไล่ / ชนะ
 CHASE_ALIASES = ["ชล", "ช่างไล่","ใล่","ช่างใล่", "ล", "ไล","ไล่"]
@@ -4611,9 +4696,16 @@ def easyslip_extract_reference(data: dict, image_bytes: bytes):
 def easyslip_receiver_check_passed(data: dict) -> bool:
     """
     ตรวจบัญชีผู้รับจาก EasySlip V2 response
-    ถ้าไม่ได้ตั้งค่าทั้ง EASYSLIP_ACCOUNT_NUMBER และ EASYSLIP_ACCOUNT_NAME_TH/EN
-    จะไม่ตรวจ → รับสลิปทุกบัญชี (ไม่แนะนำ)
+    รับจากหลายบัญชีใน AUTO_TOPUP_ACCOUNTS หรือบัญชีเดียวใน EASYSLIP_ACCOUNT_NUMBER
     """
+    # ถ้ามี AUTO_TOPUP_ACCOUNTS ให้ตรวจสอบจากรายชื่อนั้น
+    if AUTO_TOPUP_ACCOUNTS_LIST:
+        for acc in AUTO_TOPUP_ACCOUNTS_LIST:
+            if _check_receiver_against_account(data, acc["account_no"], acc["name_th"], acc["name_en"]):
+                return True
+        return False
+    
+    # ถ้าไม่มี AUTO_TOPUP_ACCOUNTS ให้ใช้ EASYSLIP_ACCOUNT_NUMBER
     expected_no   = EASYSLIP_ACCOUNT_NUMBER.strip()
     expected_name_th = EASYSLIP_ACCOUNT_NAME_TH.strip()
     expected_name_en = EASYSLIP_ACCOUNT_NAME_EN.strip()
@@ -4621,6 +4713,14 @@ def easyslip_receiver_check_passed(data: dict) -> bool:
     # ถ้าไม่ตั้งค่าเลยแม้แต่อย่างเดียว → ไม่ตรวจ (ผ่านทั้งหมด)
     if not expected_no and not expected_name_th and not expected_name_en:
         return True
+    
+    return _check_receiver_against_account(data, expected_no, expected_name_th, expected_name_en)
+
+
+def _check_receiver_against_account(data: dict, expected_no: str, expected_name_th: str, expected_name_en: str) -> bool:
+    """
+    ตรวจสอบว่าบัญชีผู้รับตรงกับบัญชีที่คาดหวังหรือไม่
+    """
 
     norm_no = lambda s: re.sub(r"[^0-9]", "", str(s or ""))
     norm_name = lambda s: re.sub(r"\s+", "", str(s or "").lower())
@@ -12569,6 +12669,21 @@ def handle_message(event):
                 f"ค่ายนี้ยังมีรอบค้างอยู่: {camp_name}\n"
                 f"บิลห้ามทับชื่อค่ายเดิม เพื่อกันแจ้งผล/ย้อนผลผิดรอบ\n"
                 f"ให้ใช้ชื่อค่ายใหม่ หรือแจ้งผลค่ายเดิมให้จบก่อน"
+            )
+            return
+
+        # ตรวจสอบว่ามีค่ายอื่นเปิดอยู่หรือไม่ (ห้ามเปิดค่ายใหม่ ตราบใดที่ค่ายเดิมยังเปิด)
+        opened_base_no, opened_camp_name, opened_state = get_any_opened_round()
+        if opened_base_no:
+            reply_text(
+                event.reply_token,
+                f"❌ เปิดรอบไม่ได้\n\n"
+                f"{opened_camp_name} ยังเปิดอยู่ (ฐาน{opened_base_no})\n\n"
+                f"ต้องปิดรอบก่อน:\n"
+                f"1. พิมพ์: ปิด {opened_camp_name}\n"
+                f"2. แจ้งราคาช่าง\n"
+                f"3. แจ้งเริ่มต้น\n\n"
+                f"จึงจะเปิด {camp_name} ได้"
             )
             return
 
