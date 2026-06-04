@@ -10941,10 +10941,9 @@ def admin_list_report() -> str:
         member_no = info.get("member_no") or user.get("member_no") or "-"
         added_at = info.get("added_at") or "-"
         added_by_name = info.get("added_by_name") or "-"
-        uid_tail = uid[-8:] if len(uid) > 8 else uid
         rows.append(
             f"{len(rows) + 1}. {name}\n"
-            f"   ID สมาชิก: {member_no} | ที่มา: {source} | UID: ...{uid_tail}\n"
+            f"   ID สมาชิก: {member_no} | ที่มา: {source} | UID: {uid}\n"
             f"   เพิ่มเมื่อ: {added_at} | เพิ่มโดย: {added_by_name}"
         )
 
