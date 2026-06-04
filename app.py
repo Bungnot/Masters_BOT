@@ -94,10 +94,10 @@ EASYSLIP_API_URL = os.getenv("EASYSLIP_API_URL", "https://developer.easyslip.com
 EASYSLIP_ACCOUNT_NUMBER = os.getenv("EASYSLIP_ACCOUNT_NUMBER", "").strip()
 EASYSLIP_ACCOUNT_NAME_TH = os.getenv("EASYSLIP_ACCOUNT_NAME_TH", "").strip()
 EASYSLIP_ACCOUNT_NAME_EN = os.getenv("EASYSLIP_ACCOUNT_NAME_EN", "").strip()
-EASYSLIP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_CONNECT_TIMEOUT_SECONDS", "3"))
-EASYSLIP_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_TIMEOUT_SECONDS", "6"))
-EASYSLIP_API_RETRIES = int(os.getenv("EASYSLIP_API_RETRIES", "1"))
-EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SECONDS", "0"))
+EASYSLIP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_CONNECT_TIMEOUT_SECONDS", "5"))
+EASYSLIP_TIMEOUT_SECONDS = float(os.getenv("EASYSLIP_TIMEOUT_SECONDS", "20"))
+EASYSLIP_API_RETRIES = int(os.getenv("EASYSLIP_API_RETRIES", "2"))
+EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SECONDS", "1.0"))
 EASYSLIP_DEBUG_MODE = os.getenv("EASYSLIP_DEBUG_MODE", "1") == "1"
 # ตรวจภาพก่อนส่งเข้า EasySlip ด้วย QR gate
 # ปิดเป็นค่าเริ่มต้น เพราะรูปสลิปจาก LINE บางครั้งถูกบีบอัด/QR เล็ก ทำให้ OpenCV ตรวจไม่เจอและบอทเงียบ
@@ -135,7 +135,6 @@ CLEAR_CONFIRM_TTL_SECONDS = int(os.getenv("CLEAR_CONFIRM_TTL_SECONDS", "120"))
 ROLLBACK_CONFIRM_TTL_SECONDS = int(os.getenv("ROLLBACK_CONFIRM_TTL_SECONDS", "120"))
 PROFILE_REFRESH_SECONDS = int(os.getenv("PROFILE_REFRESH_SECONDS", "86400"))
 PUSH_WORKERS = int(os.getenv("PUSH_WORKERS", "10"))
-PUBLIC_URL = os.getenv("PUBLIC_URL", "").strip()
 
 # ======================================================
 # Named round mode
@@ -182,6 +181,11 @@ app = Flask(__name__)
 
 # ส่ง Flex / Push แบบไม่บล็อก webhook นานเกินไป
 EXECUTOR = ThreadPoolExecutor(max_workers=PUSH_WORKERS)
+IO_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+
+# ตัวแปรสำหรับ Throttling การเขียน Backup ป้องกัน I/O ถล่มดิสก์
+LAST_BACKUP_TIME = 0
+BACKUP_COOLDOWN_SECONDS = 1.0
 
 # กัน webhook หลายรายการประมวลผล STATE พร้อมกันจนผล/ยืนยันผลสลับลำดับ
 STATE_LOCK = threading.RLock()
@@ -1222,35 +1226,51 @@ def _build_single_round_backup(round_id: str, base_no: str = None, state: dict =
     }
 
 
-def save_round_backup_db(reason: str = "auto"):
+def save_round_backup_db(reason: str = "auto", force: bool = False):
     """
-    บันทึก backup อัตโนมัติแบบแยกไฟล์ต่อรอบ
-    ไม่สร้าง round_backup.json รวมทุกอย่างอีกแล้ว
+    บันทึก backup อัตโนมัติแบบแยกไฟล์ต่อรอบ (แบบ Async และมี Throttling)
     """
     if not ROUND_BACKUP_ENABLED:
         return False
 
-    try:
-        with STATE_LOCK:
-            targets = _round_ids_for_backup()
+    global LAST_BACKUP_TIME
+    now = time.time()
+    
+    # Throttling ป้องกันการบันทึกไฟล์รัวเกินไป ยกเว้นเมื่อถูกบังคับ (force=True) เช่น ตอนแจ้งผล หรือปิดรอบ
+    if not force and (now - LAST_BACKUP_TIME < BACKUP_COOLDOWN_SECONDS):
+        return False
+
+    LAST_BACKUP_TIME = now
+
+    def _async_backup_job():
+        try:
+            with STATE_LOCK:
+                targets = _round_ids_for_backup()
+                backup_data_list = []
+                for rid, info in targets.items():
+                    data = _build_single_round_backup(
+                        rid,
+                        base_no=info.get("base_no"),
+                        state=info.get("state"),
+                        reason=reason,
+                    )
+                    if data:
+                        path = _round_backup_path(rid, data.get("base_no"))
+                        backup_data_list.append((path, data))
+            
+            # ทำ Disk I/O นอก STATE_LOCK เพื่อไม่ให้ block thread อื่นๆ
             saved = 0
-            for rid, info in targets.items():
-                data = _build_single_round_backup(
-                    rid,
-                    base_no=info.get("base_no"),
-                    state=info.get("state"),
-                    reason=reason,
-                )
-                if not data:
-                    continue
-                path = _round_backup_path(rid, data.get("base_no"))
+            for path, data in backup_data_list:
                 _atomic_json_dump(path, data)
                 saved += 1
+            return saved > 0
+        except Exception as e:
+            print(f"ASYNC ROUND BACKUP DB ERROR: {e}")
+            return False
 
-        return saved > 0
-    except Exception as e:
-        print(f"SAVE ROUND BACKUP DB ERROR: {e}")
-        return False
+    # ส่งงานไปรันแบบ Async ใน IO_EXECUTOR ที่มีเพียง 1 worker เพื่อลด Disk I/O contention
+    IO_EXECUTOR.submit(_async_backup_job)
+    return True
 
 
 def _load_round_backup_file(path: str):
@@ -1384,9 +1404,35 @@ def _round_restore_priority(payload: dict):
     return 1
 
 
+def _cleanup_cleared_backup_files():
+    """ล้างไฟล์ backup ที่มี backup_status: cleared ออกจากระบบ"""
+    if not os.path.isdir(ROUND_BACKUP_DIR):
+        return
+    
+    try:
+        for name in os.listdir(ROUND_BACKUP_DIR):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(ROUND_BACKUP_DIR, name)
+            data = _load_round_backup_file(path)
+            if data and isinstance(data, dict):
+                st = data.get("state") or {}
+                if isinstance(st, dict) and st.get("backup_status") == "cleared":
+                    try:
+                        os.remove(path)
+                        print(f"CLEANUP CLEARED BACKUP: {name}")
+                    except Exception as e:
+                        print(f"CLEANUP CLEARED BACKUP ERROR {name}: {e}")
+    except Exception as e:
+        print(f"CLEANUP CLEARED BACKUP DIR ERROR: {e}")
+
+
 def restore_round_backup_db():
     """กู้ข้อมูลรอบ / โพสต์ / คู่ติด จากไฟล์ backup แยกต่อรอบตอนเริ่มบอท"""
     global STATE, ROUNDS, ACTIVE_BASE_NO, POSTS, MATCHES
+
+    # ล้างไฟล์ backup ที่มี backup_status: cleared ก่อน restore
+    _cleanup_cleared_backup_files()
 
     if not ROUND_BACKUP_ENABLED:
         return False
@@ -1570,31 +1616,45 @@ def load_user_db():
 USERS, NEXT_MEMBER_NO = load_user_db()
 
 
-def save_user_db():
+# ตัวแปรสำหรับ Throttling การเขียน User DB
+LAST_USER_DB_SAVE_TIME = 0
+USER_DB_SAVE_COOLDOWN_SECONDS = 2.0
+
+def save_user_db(force: bool = False):
     """
-    เขียนไฟล์แบบ atomic ลดโอกาสไฟล์พังถ้าโปรแกรมหยุดกลางทาง
+    เขียนไฟล์แบบ atomic (แบบ Async และ Throttled) เพื่อไม่ให้ block thread หลัก
     """
-    data = {
-        "next_member_no": NEXT_MEMBER_NO,
-        "users": USERS,
-        "updated_at": datetime.now().isoformat(),
-    }
+    global LAST_USER_DB_SAVE_TIME
+    now = time.time()
+    
+    if not force and (now - LAST_USER_DB_SAVE_TIME < USER_DB_SAVE_COOLDOWN_SECONDS):
+        return
 
-    directory = os.path.dirname(os.path.abspath(USER_DB_FILE)) or "."
-    fd, tmp_path = tempfile.mkstemp(prefix="users_", suffix=".json", dir=directory)
+    LAST_USER_DB_SAVE_TIME = now
 
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+    # คัดลอกข้อมูลภายใต้ lock เพื่อป้องกัน race condition ระหว่างเขียนไฟล์
+    with STATE_LOCK:
+        data = {
+            "next_member_no": NEXT_MEMBER_NO,
+            "users": dict(USERS),  # shallow copy
+            "updated_at": datetime.now().isoformat(),
+        }
 
-        os.replace(tmp_path, USER_DB_FILE)
-
-    except Exception as e:
-        print(f"SAVE USER DB ERROR: {e}")
+    def _async_save_user_db():
+        directory = os.path.dirname(os.path.abspath(USER_DB_FILE)) or "."
+        fd, tmp_path = tempfile.mkstemp(prefix="users_", suffix=".json", dir=directory)
         try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, USER_DB_FILE)
+        except Exception as e:
+            print(f"ASYNC SAVE USER DB ERROR: {e}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+    IO_EXECUTOR.submit(_async_save_user_db)
 
 
 def load_profit_db():
@@ -1779,26 +1839,30 @@ SLIP_TOPUPS = load_slip_topup_db()
 
 
 def save_slip_topup_db():
-    data = {
-        "slips": SLIP_TOPUPS.get("slips", {}),
-        "updated_at": datetime.now().isoformat(),
-    }
+    """
+    เขียนไฟล์ประวัติการเติมสลิปแบบ atomic (แบบ Async) เพื่อไม่ให้ block การประมวลผล
+    """
+    with STATE_LOCK:
+        data = {
+            "slips": dict(SLIP_TOPUPS.get("slips", {})),  # shallow copy
+            "updated_at": datetime.now().isoformat(),
+        }
 
-    directory = os.path.dirname(os.path.abspath(SLIP_TOPUP_DB_FILE)) or "."
-    fd, tmp_path = tempfile.mkstemp(prefix="slip_topups_", suffix=".json", dir=directory)
-
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        os.replace(tmp_path, SLIP_TOPUP_DB_FILE)
-
-    except Exception as e:
-        print(f"SAVE SLIP TOPUP DB ERROR: {e}")
+    def _async_save_slip_topup_db():
+        directory = os.path.dirname(os.path.abspath(SLIP_TOPUP_DB_FILE)) or "."
+        fd, tmp_path = tempfile.mkstemp(prefix="slip_topups_", suffix=".json", dir=directory)
         try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, SLIP_TOPUP_DB_FILE)
+        except Exception as e:
+            print(f"ASYNC SAVE SLIP TOPUP DB ERROR: {e}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+    IO_EXECUTOR.submit(_async_save_slip_topup_db)
 
 
 # ======================================================
@@ -2404,31 +2468,13 @@ BANK_ACCOUNT_NUMBER = "3360616359"
 BANK_ACCOUNT_DISPLAY_NUMBER = "336-0-61635-9"
 BANK_ACCOUNT_BANK = "กรุงไทย"
 BANK_ACCOUNT_NAME = "จารุณี สว่างวงษ์"
-
-# ======================================================
-# Multi-account auto topup (รองรับสูงสุด 6 บัญชี)
-# ตั้งค่าใน .env:
-#
-# รูปแบบ pipe-delimited คั่นบัญชีด้วย ;
-#   AUTO_TOPUP_ACCOUNTS=เลขบัญชี|ชื่อไทย|ชื่อEnglish|ธนาคาร;เลขบัญชี2|ชื่อไทย2||ธนาคาร2
-#
-# รูปแบบ JSON array (ยืดหยุ่นกว่า ใส่ aliases ได้):
-#   AUTO_TOPUP_ACCOUNTS_JSON=[{"accountNumber":"xxx","accountNameTH":"ชื่อ","bankName":"ธนาคาร"},...]
-#
-# ถ้าไม่ตั้ง AUTO_TOPUP_ACCOUNTS / AUTO_TOPUP_ACCOUNTS_JSON ระบบจะใช้บัญชี default
-# ที่กำหนดไว้ใน BANK_ACCOUNT_NUMBER/BANK_ACCOUNT_NAME/BANK_ACCOUNT_BANK ด้านบน
-# ======================================================
-AUTO_TOPUP_ACCOUNTS_RAW = os.getenv("AUTO_TOPUP_ACCOUNTS", "").strip()
-AUTO_TOPUP_ACCOUNTS_JSON_RAW = os.getenv("AUTO_TOPUP_ACCOUNTS_JSON", "").strip()
-# จำนวนบัญชีสูงสุดที่อนุญาต (กันตั้งค่าพลาดทำให้บัญชีอื่นหลุดเข้ามา)
-AUTO_TOPUP_MAX_ACCOUNTS = int(os.getenv("AUTO_TOPUP_MAX_ACCOUNTS", "6"))
-
-# บัญชี default (ใช้เมื่อไม่ตั้ง AUTO_TOPUP_ACCOUNTS)
+# ใช้บัญชีเดียวสำหรับเติมเครดิตอัตโนมัติเท่านั้น
+# โค้ดจะใช้บัญชีนี้ตรวจ checkReceiver กับ Slip2Go และจะไม่รับบัญชีอื่น แม้ .env ยังมีบัญชีเก่าอยู่
 SINGLE_AUTO_TOPUP_RECEIVER = {
     "bankName": BANK_ACCOUNT_BANK,
     "accountNumber": BANK_ACCOUNT_NUMBER,
     "accountNameTH": BANK_ACCOUNT_NAME,
-    "accountNameEN": "Jarunee savangvong",
+    "accountNameEN": "",
     "accountNameENAliases": [],
 }
 # ดีเลคำสั่งบัญชีในกลุ่ม/ห้องเดียวกัน กันคนพิมพ์ บช/บัญชี รัว ๆ แล้วบอทตอบซ้ำ
@@ -2466,182 +2512,39 @@ def is_bank_account_request(text: str) -> bool:
 
 
 def bank_account_text() -> str:
-    """
-    สร้างข้อความแสดงบัญชีรับเติมเงินทุกบัญชี
-    อ่านจาก AUTO_TOPUP_ACCOUNTS (หรือบัญชี default ถ้าไม่ได้ตั้งค่า)
-    """
-    receivers = get_slip2go_receiver_configs()
-
-    # ถ้ายังไม่มีบัญชีเลย แสดง placeholder 6 ช่อง
-    if not receivers:
-        receivers = [
-            {"accountNumber": "xxxxxxxxxx", "accountNameTH": "ชื่อบัญชี 1", "bankName": "ธนาคาร 1"},
-            {"accountNumber": "xxxxxxxxxx", "accountNameTH": "ชื่อบัญชี 2", "bankName": "ธนาคาร 2"},
-            {"accountNumber": "xxxxxxxxxx", "accountNameTH": "ชื่อบัญชี 3", "bankName": "ธนาคาร 3"},
-            {"accountNumber": "xxxxxxxxxx", "accountNameTH": "ชื่อบัญชี 4", "bankName": "ธนาคาร 4"},
-            {"accountNumber": "xxxxxxxxxx", "accountNameTH": "ชื่อบัญชี 5", "bankName": "ธนาคาร 5"},
-            {"accountNumber": "xxxxxxxxxx", "accountNameTH": "ชื่อบัญชี 6", "bankName": "ธนาคาร 6"},
-        ]
-
-    bank_icons = {
-        "ไทยพาณิชย์": "🟣", "scb": "🟣",
-        "กสิกรไทย": "🟢", "kbank": "🟢",
-        "กรุงเทพ": "🔵", "bbl": "🔵",
-        "กรุงไทย": "🔷", "ktb": "🔷",
-        "ทหารไทยธนชาต": "🟠", "ttb": "🟠",
-        "ออมสิน": "🟡", "gsb": "🟡",
-        "ธอส": "🟤", "ghb": "🟤",
-        "กรุงศรี": "🟡", "bay": "🟡",
-        "ซีไอเอ็มบี": "⚪", "cimb": "⚪",
-        "ยูโอบี": "🔴", "uob": "🔴",
-        "พร้อมเพย์": "💜", "promptpay": "💜",
-        "ทรูมันนี่": "🔶", "truemoney": "🔶",
-    }
-
-    lines = []
-    lines.append("📌💎บั้งไฟเหล่าเซียน💯💵")
-    lines.append("━━━━━━━━━━━━━━")
-    lines.append("")
-    lines.append("🏦 บัญชีรับฝากเงิน")
-    lines.append("")
-
-    for i, rec in enumerate(receivers, 1):
-        acc_no = rec.get("accountNumber") or "-"
-        acc_name = rec.get("accountNameTH") or rec.get("accountNameEN") or "-"
-        bank = rec.get("bankName") or ""
-        icon = "🏦"
-        for k, v in bank_icons.items():
-            if k.lower() in bank.lower():
-                icon = v
-                break
-
-        # จัดรูปเลขบัญชีตามจำนวนหลัก
-        digits = acc_no.replace("-", "").replace(" ", "")
-        if digits.isdigit() and len(digits) == 10:
-            display_no = f"{digits[:3]}-{digits[3]}-{digits[4:9]}-{digits[9]}"
-        elif digits.isdigit() and len(digits) == 12:
-            # ออมสิน 12 หลัก: xxx-x-xxxxxxx-x
-            display_no = f"{digits[:3]}-{digits[3]}-{digits[4:11]}-{digits[11]}"
-        else:
-            display_no = acc_no
-
-        lines.append(f"─── บัญชีที่ {i} ───")
-        lines.append(f"{icon} ธนาคาร  : {bank}")
-        lines.append(f"🔢 เลขบัญชี : {display_no}")
-        lines.append(f"👤 ชื่อบัญชี : {acc_name}")
-        if i < len(receivers):
-            lines.append("")
-
-    lines.append("")
-    lines.append("━━━━━━━━━━━━━━")
-    lines.append("⚠️ เพื่อป้องกันมิจฉาชีพ")
-    lines.append("ชื่อผู้ฝาก-ถอน ต้องเป็นชื่อเดียวกันเท่านั้น ✅")
-
-    return "\n".join(lines)
+    return (
+        "📌💎บั้งไฟเหล่าเซียน💯💵\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "🏦 แจ้งเลขบัญชีฝากเงิน\n\n"
+        "🔢 เลขบัญชี : 336-0-61635-9\n"
+        "🏛 ธนาคาร : กรุงไทย\n"
+        "👤 ชื่อบัญชี : จารุณี สว่างวงษ์\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "⚠️ เพื่อป้องกันมิจฉาชีพ\n"
+        "ชื่อผู้ฝาก-ถอน ต้องเป็นชื่อเดียวกันเท่านั้น ✅"
+    )
 
 def bank_account_backoffice_flex():
-    """Flex สีเขียวสวยงาม แจ้งลูกค้าว่าบัญชีอยู่ในแชทส่วนตัว พร้อมปุ่มติดตามแอดมิน"""
-    admin_url = os.getenv("BANK_ADMIN_LINE_URL", "https://page.line.me/901qfixd").strip() or "https://page.line.me/901qfixd"
+    """Flex ปุ่มสีเขียวแบบเด้งแยกอีก 1 ข้อความ สำหรับคำสั่ง บช"""
     return {
         "type": "bubble",
-        "size": "mega",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "backgroundColor": "#16A34A",
-            "paddingTop": "16px",
-            "paddingBottom": "16px",
-            "paddingStart": "16px",
-            "paddingEnd": "16px",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "🏦 ขอเลขบัญชี",
-                    "color": "#FFFFFF",
-                    "size": "xl",
-                    "weight": "bold",
-                    "align": "center",
-                },
-                {
-                    "type": "text",
-                    "text": "บัญชีจะแจ้งในแชทส่วนตัวของคุณ",
-                    "color": "#D1FAE5",
-                    "size": "sm",
-                    "align": "center",
-                    "margin": "sm",
-                },
-            ],
-        },
+        "size": "kilo",
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
-            "paddingTop": "16px",
-            "paddingBottom": "4px",
-            "paddingStart": "16px",
-            "paddingEnd": "16px",
-            "contents": [
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "📲",
-                            "size": "sm",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "text",
-                            "text": "พิมพ์ บช ในแชทส่วนตัวกับบอท เพื่อรับเลขบัญชี",
-                            "size": "sm",
-                            "color": "#374151",
-                            "wrap": True,
-                            "flex": 1,
-                        },
-                    ],
-                },
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "⚠️",
-                            "size": "sm",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "text",
-                            "text": "รบกวนเช็คเลขบัญชีและชื่อก่อนโอนทุกครั้ง",
-                            "size": "sm",
-                            "color": "#6B7280",
-                            "wrap": True,
-                            "flex": 1,
-                        },
-                    ],
-                },
-            ],
-        },
-        "footer": {
-            "type": "box",
-            "layout": "vertical",
             "paddingTop": "8px",
-            "paddingBottom": "16px",
-            "paddingStart": "12px",
-            "paddingEnd": "12px",
+            "paddingBottom": "8px",
+            "paddingStart": "8px",
+            "paddingEnd": "8px",
             "contents": [
                 {
                     "type": "button",
                     "style": "primary",
-                    "color": "#16A34A",
                     "height": "md",
                     "action": {
                         "type": "uri",
-                        "label": "ขอเลขบัญชีกดที่ปุ่มนี้เลย!",
-                        "uri": admin_url,
+                        "label": "กดเข้าหลังบ้าน",
+                        "uri": BANK_BACKOFFICE_URL,
                     },
                 }
             ],
@@ -2872,80 +2775,60 @@ def is_admin_help_request(text: str) -> bool:
 
 def admin_command_help_text() -> str:
     return (
-        "📌 คำสั่งแอดมินทั้งหมด (อัปเดตล่าสุด)\n"
-        "━━━━━━━━━━━━━━\n\n"
-
+        "📌 คำสั่งแอดมินทั้งหมด\n"
+        "ใช้ได้เฉพาะกลุ่มหลังบ้านเท่านั้น\n\n"
         "👤 ข้อมูล/ระบบ\n"
-        "- คำสั่ง = แสดงรายการคำสั่งทั้งหมด\n"
+        "- คำสั่ง = แสดงรายการคำสั่งแอดมินทั้งหมด\n"
         "- GETID = ดู groupId / roomId ของห้องนี้\n"
         "- UID = ดู UID ของผู้พิมพ์\n"
         "- UIDLIST = ดูรายชื่อสมาชิกทั้งหมด\n"
-        "- C @ชื่อไลน์ = เช็ก LINE / ID / ยอดเงินของคนที่แท็ก\n"
-        "- CALL = ดูรายชื่อลูกค้าที่ระบบรู้จัก\n"
+        "- C @ชื่อไลน์ = เช็กชื่อ LINE / ID สมาชิก / ยอดเงินของคนที่แท็ก ใช้ได้ทั้งหลังบ้านและหน้าบ้าน เฉพาะแอดมิน\n"
+        "- CALL = ดูรายชื่อลูกค้าที่ระบบรู้จัก/เรียกดูข้อมูลสมาชิก\n"
         "- เพิ่มแอดมิน @ชื่อไลน์ = เพิ่มแอดมินจากการ mention\n"
-        "- ลบแอดมิน <UID> = ลบแอดมินโดยระบุ UID\n"
-        "- List / เช็คแอดมิน = ดูรายชื่อแอดมินทั้งหมด\n\n"
-
+        "- List / เช็คแอดมิน = ดูรายชื่อแอดมินทั้งหมดในระบบ\n\n"
         "💰 เครดิต/กำไร\n"
-        "- $+เลขสมาชิก ยอด = เพิ่มเครดิต เช่น $+1 1000 หรือ +1 1000\n"
-        "- $-เลขสมาชิก ยอด = หักเครดิต เช่น $-1 1000 หรือ -1 1000\n"
-        "  (รองรับทั้ง $+1 100 / $+ 1 100 / +1 100 / +1/100)\n"
+        "- $+ เลขสมาชิก จำนวนเงิน = เพิ่มเครดิต เช่น $+ 1 1000\n"
+        "- $- เลขสมาชิก จำนวนเงิน = หักเครดิต เช่น $- 1 1000\n"
         "- ยอดกำไร / กำไร / profit = ดูยอดกำไรสะสม\n"
         "- ล้างกำไร = รีเซ็ตยอดกำไรสะสม\n\n"
-
-        "💸 ถอน/เครดิตลูกค้า\n"
-        "- ถอนทั้งหมด / เคลียร์ยอด = เคลียร์เครดิตลูกค้าเป็น 0\n"
-        "- รอถอน = ส่ง Flex แจ้งสถานะรอถอน (ไม่แตะเครดิต)\n"
-        "  ⚠️ ใช้ได้เฉพาะหน้าบ้านหรือแชทส่วนตัว\n\n"
-
-        "🏦 บัญชี\n"
-        "- บช / บัญชี = ดูเลขบัญชีทั้งหมด\n"
-        "  (กลุ่ม = บอทส่ง Flex / แชท 1-1 = บอทส่ง TEXT เลขบัญชีครบ)\n\n"
-
+        "💸 คำสั่งลูกค้าเกี่ยวกับถอน\n"
+        "- ถอนทั้งหมด / เคลียร์ยอด = เคลียร์เครดิตลูกค้าเป็น 0 และส่ง Flex แจ้งทำรายการถอน\n"
+        "- รอถอน = ส่ง Flex แจ้งสถานะถอน โดยไม่แตะเครดิต\n"
+        "หมายเหตุ: ใช้ได้เฉพาะหน้าบ้านหรือแชทส่วนตัว ไม่ทำงานในหลังบ้าน\n\n"
         "🚀 จัดการค่าย/รอบ\n"
-        "- เปิด ชื่อค่าย = เปิดรอบใหม่\n"
-        "- ปิด / ปิด ชื่อค่าย = ปิดค่าย\n"
-        "- เล่นต่อ / เล่นต่อ ชื่อค่าย = เปิดให้เล่นต่อ\n"
+        "- เปิด ชื่อค่าย = เปิดรอบใหม่ ระบบแยกรอบให้เอง ไม่ต้องใช้ฐาน\n"
+        "- ปิด = ปิดค่ายล่าสุดที่เปิดรับอยู่\n"
+        "- ปิด ชื่อค่าย = ปิดค่ายที่ระบุชื่อ\n"
+        "- เล่นต่อ = เปิดให้เล่นต่อในค่ายล่าสุดที่ปิดอยู่\n"
+        "- เล่นต่อ ชื่อค่าย = เปิดให้ค่ายที่ระบุเล่นต่อ\n"
         "- เปลี่ยนค่าย ชื่อค่ายใหม่ = เปลี่ยนชื่อค่ายที่เปิดผิด\n\n"
-
         "📊 ราคาช่าง/ผล/ตรวจรอบ\n"
-        "- ราคาช่าง 330-360 = ตั้งราคาช่างค่ายล่าสุด\n"
+        "- ราคาช่าง 330-360 = ตั้งราคาช่างค่ายล่าสุดที่ปิดอยู่\n"
         "- ราคาช่าง ชื่อค่าย 330-360 = ตั้งราคาช่างตามชื่อค่าย\n"
-        "- ราคาช่าง ไม่ต่อย / ราคาช่าง ไม่ตี = ช่างไม่มีราคา (ต้องพิมพ์ ยืนยัน)\n"
-        "- เริ่มต้น1 / เริ่มต้น2 / เริ่มต้น3 = แปลงแผลเลข 2 ตัว\n"
-        "  (เริ่มต้น1=100, เริ่มต้น2=200, เริ่มต้น3=300)\n"
-        "- ยืนยัน / ยืนยัน ชื่อค่าย = ยืนยันราคาช่างไม่มีราคา หรือยืนยัน CR\n"
-        "- แจ้งผล 365 / ผล 365 = แจ้งผลเมื่อมีค่ายเดียว\n"
-        "- แจ้งผล ชื่อค่าย 365 = แจ้งผลตามชื่อค่าย\n"
-        "- แจ้งผล ชื่อค่าย จาวทุกแผล = คืนทุนทุกแผล\n"
-        "- แจ้งผล ชื่อค่าย บั้งไฟหาย = คืนทุนกรณีบั้งไฟหาย\n"
-        "- CK = ตรวจสถานะรอบปัจจุบัน\n"
+        "- ราคาช่าง ไม่ต่อย / ราคาช่าง ไม่ตี = ตั้งสถานะช่างไม่มีราคา แล้วต้องพิมพ์ ยืนยัน\n"
+        "- ราคาช่าง ชื่อค่าย ไม่ต่อย / ไม่ตี = ตั้งสถานะช่างไม่มีราคาตามชื่อค่าย\n"
+        "- ยืนยัน ชื่อค่าย = ยืนยันราคาช่างไม่มีราคา หรือยืนยัน CR ของค่ายนั้น\n"
+        "- แจ้งผล 365 / ผล 365 = แจ้งผลเมื่อมีค่ายเดียวที่ยังค้างอยู่\n"
+        "- แจ้งผล ชื่อค่าย 365 = แจ้งผลตามชื่อค่าย กรณีมีหลายค่าย\n"
+        "- แจ้งผล ชื่อค่าย จาวทุกแผล = คืนทุนทุกแผลตามชื่อค่าย\n"
+        "- แจ้งผล ชื่อค่าย บั้งไฟหาย = คืนทุนทุกแผลกรณีบั้งไฟหายตามชื่อค่าย\n"
+        "- CK = ตรวจสถานะรอบปัจจุบัน เมื่อมีค่ายเดียวที่ค้างอยู่\n"
         "- CK ชื่อค่าย = ตรวจสถานะตามชื่อค่าย\n"
         "- CK รวม = ดูสถานะทุกค่าย\n"
-        "- คู่ติด / คู่รอบนี้ = ดูคู่ที่ติดกันรอบปัจจุบัน\n"
+        "- คู่ติด / คู่รอบนี้ = ดูว่ารอบปัจจุบันใครติดกับใครบ้าง\n"
         "- คู่ติด ชื่อค่าย = ดูคู่ติดตามชื่อค่าย\n"
-        "- listplay / listplay ชื่อค่าย = ดูรายการเล่นแบบสั้น\n"
-        "- สกอ / สกอร์ / รายการ = ดูสรุปผลแบบ Flex\n"
-        "- CR ชื่อค่าย / ยืนยัน ชื่อค่าย = เคลียร์รอบ\n\n"
-
+        "- listplay = ดูสมาชิกที่เล่นกันแบบสั้น เช่น นาย A เล่น 320-350ล500 กับ นาย B\n"
+        "- listplay ชื่อค่าย = ดูรายการเล่นแบบสั้นตามชื่อค่าย\n"
+        "- สกอ / สกอร์ / รายการ = ดูสรุปผลค่ายที่แจ้งผลแล้วแบบ Flex\n"
+        "- CR ชื่อค่าย / ยืนยัน ชื่อค่าย = เคลียร์รอบตามชื่อค่าย\n\n"
         "↩️ ย้อนผล/ล้างออเดอร์\n"
         "- ย้อนผล ชื่อค่าย = ขอคืนผลที่แจ้งผิด\n"
         "- ยืนยันย้อนผล ชื่อค่าย = ยืนยันการย้อนผล\n"
         "- ยกเลิกย้อนผล ชื่อค่าย = ยกเลิกคำขอย้อนผล\n"
-        "- ล้างออเดอร์ = ล้างบิลทั้งหมด เริ่มเลขออเดอร์ที่ #1\n"
-        "- ตั้งเลขออเดอร์ 100 = เริ่มเลขออเดอร์ที่กำหนด\n"
-        "- ล้าง round_backups = ล้างไฟล์สำรองรอบเก่า\n\n"
-
-        "📋 คำสั่งลูกค้า (ใช้ได้ทั่วไป)\n"
-        "- กต / กติกา = ดูวิธีการเล่น\n"
-        "- วิธียก / วิธียกเลิก = ดูวิธียกเลิกแผล\n"
-        "- สมาชิกใหม่ / มาใหม่ = ดูขั้นตอนสมัครสมาชิก\n"
-        "- ยอด / เครดิต / ยอดเงิน = ดูยอดเครดิตของตัวเอง\n"
-        "- ถอนทั้งหมด / เคลียร์ยอด = ขอถอนเครดิตทั้งหมด\n"
-        "- รอถอน = แจ้งสถานะรอถอน\n\n"
-
-        "⚠️ ถ้ามีหลายค่ายค้างอยู่ ให้ใช้ชื่อค่ายแทนฐาน\n"
-        "เช่น แจ้งผล แอ๊ดเทวดา 350 / ราคาช่าง แอ๊ดเทวดา 330-360 / ย้อนผล แอ๊ดเทวดา"
+        "- ล้างออเดอร์ = ล้างบิลทั้งหมดและเริ่มเลขออเดอร์ใหม่ที่ #1\n"
+        "- ตั้งเลขออเดอร์ 100 = ล้างบิลและเริ่มเลขออเดอร์ใหม่ที่ #100\n"
+        "- ล้าง round_backups = ล้างไฟล์สำรองรอบเก่าในโฟลเดอร์ round_backups\n\n"
+        "⚠️ ถ้ามีหลายค่ายค้างอยู่ ให้ใช้ชื่อค่ายแทนฐาน เช่น แจ้งผล แอ๊ดเทวดา 350 / ราคาช่าง แอ๊ดเทวดา 330-360 / ย้อนผล แอ๊ดเทวดา"
     )
 
 
@@ -2958,30 +2841,24 @@ def is_rules_request(text: str) -> bool:
     return clean in {"กต", "กติกา"}
 
 
-RULES_IMAGE_URL = "https://img2.pic.in.th/b6b4bb4c-aaef-4391-b1e7-a1cea2ffd5fa.png"
+RULES_IMAGE_URL = "https://img2.pic.in.th/26d02e16-f7cf-403f-92ed-2a8eed65d8d1.png"
 
 
 def rules_flex() -> dict:
     return {
         "type": "bubble",
         "size": "giga",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "paddingAll": "0px",
-            "contents": [
-                {
-                    "type": "image",
-                    "url": RULES_IMAGE_URL,
-                    "size": "full",
-                    "aspectRatio": "5:7",
-                    "aspectMode": "fit",
-                    "action": {
-                        "type": "uri",
-                        "uri": RULES_IMAGE_URL,
-                    },
-                }
-            ],
+        "hero": {
+            "type": "image",
+            "url": RULES_IMAGE_URL,
+            "size": "full",
+            "aspectRatio": "2:3",
+            "aspectMode": "fit",
+            "backgroundColor": "#FFFFFF",
+            "action": {
+                "type": "uri",
+                "uri": RULES_IMAGE_URL,
+            },
         },
     }
 
@@ -4308,38 +4185,13 @@ def _legacy_receiver_account_config():
 
 def get_slip2go_receiver_configs():
     """
-    คืนรายการบัญชีผู้รับที่อนุญาตให้เติมเครดิตอัตโนมัติ (รองรับสูงสุด AUTO_TOPUP_MAX_ACCOUNTS บัญชี)
+    คืนบัญชีผู้รับที่อนุญาตให้เติมเครดิตอัตโนมัติแบบบัญชีเดียวเท่านั้น
 
-    ลำดับการอ่านค่า (หยุดที่แหล่งแรกที่ได้ข้อมูล):
-    1. AUTO_TOPUP_ACCOUNTS_JSON — JSON array รูปแบบเต็ม
-    2. AUTO_TOPUP_ACCOUNTS     — pipe-delimited text
-    3. SINGLE_AUTO_TOPUP_RECEIVER — บัญชี default ใน code
-
-    ตัวอย่าง .env:
-      AUTO_TOPUP_ACCOUNTS=9382633298|ภานุพงษ์ เอี่ยมท่า||ไทยพาณิชย์;1234567890|ชื่อ2||กสิกรไทย
-      AUTO_TOPUP_ACCOUNTS_JSON=[{"accountNumber":"938...","accountNameTH":"ภานุพงษ์...","bankName":"ไทยพาณิชย์"},...]
+    หมายเหตุ:
+    - เวอร์ชันนี้ตั้งใจไม่อ่าน SLIP2GO_RECEIVER_ACCOUNTS_JSON / SLIP2GO_RECEIVER_ACCOUNTS จาก .env
+      เพื่อกันบัญชีเก่าหรือบัญชีที่ 2 หลุดเข้ามาเติมเครดิตได้
+    - บัญชีที่รับเติมอัตโนมัติคือ 938-2633-298 ไทยพาณิชย์ ภานุพงษ์ เอี่ยมท่า เท่านั้น
     """
-    # 1. JSON array
-    if AUTO_TOPUP_ACCOUNTS_JSON_RAW:
-        try:
-            receivers = _parse_receiver_accounts_from_json(AUTO_TOPUP_ACCOUNTS_JSON_RAW)
-        except Exception as e:
-            print(f"AUTO_TOPUP_ACCOUNTS_JSON parse error: {e}")
-            receivers = []
-        if receivers:
-            return receivers[:AUTO_TOPUP_MAX_ACCOUNTS]
-
-    # 2. pipe-delimited text
-    if AUTO_TOPUP_ACCOUNTS_RAW:
-        try:
-            receivers = _parse_receiver_accounts_from_text(AUTO_TOPUP_ACCOUNTS_RAW)
-        except Exception as e:
-            print(f"AUTO_TOPUP_ACCOUNTS parse error: {e}")
-            receivers = []
-        if receivers:
-            return receivers[:AUTO_TOPUP_MAX_ACCOUNTS]
-
-    # 3. fallback: บัญชี default ใน code
     receiver = _normalise_receiver_config(SINGLE_AUTO_TOPUP_RECEIVER)
     return [receiver] if receiver else []
 
@@ -4707,128 +4559,105 @@ def easyslip_extract_reference(data: dict, image_bytes: bytes):
     return extract_reference_from_slip2go(data, image_bytes)
 
 
-def _easyslip_check_one_receiver(acct: dict, data: dict, expected_no: str, expected_name_th: str, expected_name_en: str) -> bool:
+def easyslip_receiver_check_passed(data: dict) -> bool:
     """
-    ตรวจ EasySlip response กับบัญชีหนึ่ง ๆ
-    คืน True ถ้า receiver ในสลิปตรงกับบัญชีที่ส่งมา
+    ตรวจบัญชีผู้รับจาก EasySlip V2 response
+    ถ้าไม่ได้ตั้งค่าทั้ง EASYSLIP_ACCOUNT_NUMBER และ EASYSLIP_ACCOUNT_NAME_TH/EN
+    จะไม่ตรวจ → รับสลิปทุกบัญชี (ไม่แนะนำ)
     """
+    expected_no   = EASYSLIP_ACCOUNT_NUMBER.strip()
+    expected_name_th = EASYSLIP_ACCOUNT_NAME_TH.strip()
+    expected_name_en = EASYSLIP_ACCOUNT_NAME_EN.strip()
+
+    # ถ้าไม่ตั้งค่าเลยแม้แต่อย่างเดียว → ไม่ตรวจ (ผ่านทั้งหมด)
+    if not expected_no and not expected_name_th and not expected_name_en:
+        return True
+
     norm_no = lambda s: re.sub(r"[^0-9]", "", str(s or ""))
     norm_name = lambda s: re.sub(r"\s+", "", str(s or "").lower())
 
     expected_no_digits = norm_no(expected_no)
 
-    prefixes = ["นาย", "นาง", "น.ส.", "นางสาว", "mr.", "mrs.", "ms.", "miss"]
-    def strip_prefix(s):
-        for p in prefixes:
-            if s.startswith(norm_name(p)):
-                s = s[len(norm_name(p)):]
-        return s.strip()
-
-    # ── 1. เทียบชื่อบัญชี ─────────────────────────────────────────────────
-    if expected_name_th or expected_name_en:
-        name_th = norm_name(acct.get("name", {}).get("th") or "")
-        name_en = norm_name(acct.get("name", {}).get("en") or "")
-        name_th_clean = strip_prefix(name_th)
-        name_en_clean = strip_prefix(name_en)
-
-        if expected_name_th:
-            exp_th = strip_prefix(norm_name(expected_name_th))
-            if exp_th and (exp_th in name_th_clean or name_th_clean in exp_th):
-                return True
-            if exp_th and name_th_clean and exp_th[:4] == name_th_clean[:4]:
-                return True
-
-        if expected_name_en:
-            exp_en = strip_prefix(norm_name(expected_name_en))
-            if exp_en and (exp_en in name_en_clean or name_en_clean in exp_en):
-                return True
-            if exp_en and name_en_clean and exp_en[:4] == name_en_clean[:4]:
-                return True
-
-    # ── 2. เทียบเลขบัญชี ──────────────────────────────────────────────────
-    if expected_no_digits:
-        bank_obj = acct.get("bank") or {}
-        if isinstance(bank_obj, dict):
-            acct_no_digits = norm_no(bank_obj.get("account") or "")
-            if acct_no_digits:
-                if acct_no_digits == expected_no_digits:
-                    return True
-                suffix = min(len(acct_no_digits), len(expected_no_digits), 6)
-                if suffix >= 4 and acct_no_digits[-suffix:] == expected_no_digits[-suffix:]:
-                    return True
-
-        # ── 3. PromptPay proxy ────────────────────────────────────────────
-        proxy_obj = acct.get("proxy") or {}
-        if isinstance(proxy_obj, dict):
-            proxy_digits = norm_no(proxy_obj.get("account") or "")
-            if proxy_digits:
-                if proxy_digits == expected_no_digits:
-                    return True
-                suffix = min(len(proxy_digits), len(expected_no_digits), 6)
-                if suffix >= 4 and proxy_digits[-suffix:] == expected_no_digits[-suffix:]:
-                    return True
-
-        # ── 4. matchedAccount ────────────────────────────────────────────
-        matched = data.get("data", {}).get("matchedAccount") or {}
-        if isinstance(matched, dict):
-            matched_digits = norm_no(matched.get("bankNumber") or "")
-            if matched_digits and matched_digits == expected_no_digits:
-                return True
-
-    return False
-
-
-def easyslip_receiver_check_passed(data: dict) -> bool:
-    """
-    ตรวจบัญชีผู้รับจาก EasySlip V2 response
-    รองรับหลายบัญชี: ผ่านถ้าตรงกับบัญชีใดบัญชีหนึ่งใน get_slip2go_receiver_configs()
-
-    ถ้าไม่ได้ตั้งค่าบัญชีไว้เลย → ไม่ตรวจ (ผ่านทั้งหมด ไม่แนะนำ)
-    """
-    receivers = get_slip2go_receiver_configs()
-
-    # fallback: ใช้ EASYSLIP_ACCOUNT_NUMBER/NAME จาก .env เดิม (ถ้าไม่มีบัญชีจาก multi config)
-    if not receivers:
-        expected_no = EASYSLIP_ACCOUNT_NUMBER.strip()
-        expected_name_th = EASYSLIP_ACCOUNT_NAME_TH.strip()
-        expected_name_en = EASYSLIP_ACCOUNT_NAME_EN.strip()
-        if not expected_no and not expected_name_th and not expected_name_en:
-            return True
-        receivers = [{"accountNumber": expected_no, "accountNameTH": expected_name_th, "accountNameEN": expected_name_en}]
-
-    norm_no = lambda s: re.sub(r"[^0-9]", "", str(s or ""))
-    norm_name = lambda s: re.sub(r"\s+", "", str(s or "").lower())
-
     try:
         raw = easyslip_get_raw_slip(data)
-        receiver_data = raw.get("receiver", {})
-        acct = receiver_data.get("account", {})
+        receiver = raw.get("receiver", {})
+        acct = receiver.get("account", {})
 
-        for rec in receivers:
-            exp_no = (rec.get("accountNumber") or "").strip()
-            exp_name_th = (rec.get("accountNameTH") or "").strip()
-            exp_name_en = (rec.get("accountNameEN") or "").strip()
+        # ── 1. เทียบชื่อบัญชีก่อน (แม่นยำกว่าเลขบัญชี masked) ──────────────
+        if expected_name_th or expected_name_en:
+            name_th = norm_name(acct.get("name", {}).get("th") or "")
+            name_en = norm_name(acct.get("name", {}).get("en") or "")
 
-            # ตรวจ aliases ด้วย
-            aliases = rec.get("accountNameENAliases") or []
+            # ตัดคำนำหน้าชื่อ ออกก่อนเทียบ
+            prefixes = ["นาย", "นาง", "น.ส.", "นางสาว", "mr.", "mrs.", "ms.", "miss"]
+            def strip_prefix(s):
+                for p in prefixes:
+                    if s.startswith(norm_name(p)):
+                        s = s[len(norm_name(p)):]
+                return s.strip()
 
-            if _easyslip_check_one_receiver(acct, data, exp_no, exp_name_th, exp_name_en):
-                return True
+            name_th_clean = strip_prefix(name_th)
+            name_en_clean = strip_prefix(name_en)
 
-            # ตรวจ EN aliases
-            for alias in aliases:
-                alias = str(alias or "").strip()
-                if alias and _easyslip_check_one_receiver(acct, data, exp_no, "", alias):
+            if expected_name_th:
+                exp_th = strip_prefix(norm_name(expected_name_th))
+                # เทียบ 2 ทิศทาง: expected ใน got หรือ got ใน expected
+                if exp_th and (exp_th in name_th_clean or name_th_clean in exp_th):
+                    return True
+                # เทียบ partial: ตัวแรกของชื่อตรงกัน (กรณี EasySlip ตัดชื่อ)
+                if exp_th and name_th_clean and (
+                    exp_th[:4] == name_th_clean[:4]  # 4 ตัวแรกตรงกัน
+                ):
+                    return True
+
+            if expected_name_en:
+                exp_en = strip_prefix(norm_name(expected_name_en))
+                if exp_en and (exp_en in name_en_clean or name_en_clean in exp_en):
+                    return True
+                if exp_en and name_en_clean and exp_en[:4] == name_en_clean[:4]:
+                    return True
+
+        # ── 2. เทียบเลขบัญชี (bank account) ─────────────────────────────────
+        if expected_no_digits:
+            bank_obj = acct.get("bank") or {}
+            if isinstance(bank_obj, dict):
+                acct_no_digits = norm_no(bank_obj.get("account") or "")
+                if acct_no_digits:
+                    # exact match
+                    if acct_no_digits == expected_no_digits:
+                        return True
+                    # suffix match (masked เช่น xxx-x-x3329-x)
+                    suffix = min(len(acct_no_digits), len(expected_no_digits), 6)
+                    if suffix >= 4 and acct_no_digits[-suffix:] == expected_no_digits[-suffix:]:
+                        return True
+
+            # ── 3. เทียบ PromptPay proxy (เบอร์โทร / เลขบัตร) ───────────────
+            proxy_obj = acct.get("proxy") or {}
+            if isinstance(proxy_obj, dict):
+                proxy_digits = norm_no(proxy_obj.get("account") or "")
+                if proxy_digits:
+                    if proxy_digits == expected_no_digits:
+                        return True
+                    suffix = min(len(proxy_digits), len(expected_no_digits), 6)
+                    if suffix >= 4 and proxy_digits[-suffix:] == expected_no_digits[-suffix:]:
+                        return True
+
+            # ── 4. matchedAccount จาก EasySlip ───────────────────────────────
+            matched = data.get("data", {}).get("matchedAccount") or {}
+            if isinstance(matched, dict):
+                matched_digits = norm_no(matched.get("bankNumber") or "")
+                if matched_digits and matched_digits == expected_no_digits:
                     return True
 
         if EASYSLIP_DEBUG_MODE:
             try:
                 acct_bank = (acct.get("bank") or {})
                 acct_proxy = (acct.get("proxy") or {})
-                checked = [(r.get("accountNumber",""), r.get("accountNameTH","")) for r in receivers]
                 print(
-                    f"EASYSLIP RECEIVER FAIL (multi) | "
-                    f"checked_accounts={checked} | "
+                    f"EASYSLIP RECEIVER FAIL | "
+                    f"expected_no={expected_no_digits!r} "
+                    f"expected_name_th={expected_name_th!r} "
+                    f"expected_name_en={expected_name_en!r} | "
                     f"got_bank={norm_no(acct_bank.get('account',''))!r} "
                     f"got_proxy={norm_no(acct_proxy.get('account',''))!r} "
                     f"got_name_th={norm_name(acct.get('name',{}).get('th',''))!r}"
@@ -4839,6 +4668,8 @@ def easyslip_receiver_check_passed(data: dict) -> bool:
     except Exception as e:
         if EASYSLIP_DEBUG_MODE:
             print(f"EASYSLIP RECEIVER CHECK EXCEPTION: {e}")
+        # exception = parse error ไม่ใช่บัญชีผิด → ให้ผ่านไม่ได้
+        # คืน False เพื่อความปลอดภัย
         return False
 
     return False
@@ -5726,10 +5557,10 @@ def slip2go_reject_flex(data=None, reject_type: str = None, reject_msg: str = No
 
     status_map = {
         "receiver": {
-            "title": "❌ ไม่ใช่บัญชีของกลุ่มเรา",
-            "status": "โอนผิดบัญชี",
-            "reason": "บัญชีปลายทางในสลิปไม่ตรงกับบัญชีของกลุ่ม กรุณาตรวจสอบเลขบัญชีที่โอนอีกครั้ง",
-            "suggestion": "พิมพ์ บช ในแชทส่วนตัวเพื่อดูบัญชีที่ถูกต้องของกลุ่ม แล้วส่งสลิปใหม่ที่โอนเข้าบัญชีกลุ่มเท่านั้น",
+            "title": "❌ บัญชีผู้รับไม่ถูกต้อง",
+            "status": "บัญชีไม่ตรง",
+            "reason": "บัญชีผู้รับในสลิปไม่ตรงกับบัญชีร้านที่ตั้งไว้",
+            "suggestion": "ตรวจว่าลูกค้าโอนเข้าบัญชีร้านถูกต้อง หรือให้ส่งสลิปของรายการที่โอนเข้าบัญชีร้านจริง",
         },
         "amount": {
             "title": "❌ ยอดโอนไม่ตรงเงื่อนไข",
@@ -5862,9 +5693,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
             err_type = debug.get("error_type", "")
             if err_type in ("timeout", "connection_error"):
                 return slip_pending_retry_flex(
-                    "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน\n\n"
-                    "⚠️ หากโอนถูกบัญชี: รอ 2-3 นาที แล้วส่งสลิปใหม่อีกครั้ง\n"
-                    "⚠️ หากโอนผิดบัญชี: พิมพ์ บช เพื่อดูบัญชีที่ถูกต้องของกลุ่ม"
+                    "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน ระบบยังไม่เติมเครดิตและยังไม่บันทึกว่าสลิปนี้ถูกใช้แล้ว"
                 )
 
         # V2: 404 + SLIP_PENDING = ธ.กรุงเทพยังไม่ sync
@@ -5914,7 +5743,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
                 print(f"EASYSLIP RECEIVER FAIL: bank={acct.get('bank')}, proxy={acct.get('proxy')}, name={acct.get('name')}, expected_no={EASYSLIP_ACCOUNT_NUMBER!r}, expected_name={EASYSLIP_ACCOUNT_NAME_TH!r}")
             except Exception:
                 pass
-        return slip2go_reject_flex(data, "receiver", "บัญชีปลายทางในสลิปไม่ใช่บัญชีของกลุ่มเรา")
+        return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
 
     # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ───────────────────────────────────
     with STATE_LOCK:
@@ -6045,11 +5874,11 @@ def _post_line_api(url: str, payload: dict, timeout_seconds: float, label: str) 
     แก้เคส api.line.me connect timeout แล้ว webhook ค้างหรือ reply หลุด
     หมายเหตุ: ถ้าเน็ต/ไฟร์วอลล์ของเครื่องออก api.line.me ไม่ได้จริง ๆ โค้ดจะไม่ค้าง แต่ LINE จะยังส่งไม่สำเร็จ
     """
-    # สำรองสถานะล่าสุดก่อนส่งข้อความออก LINE
+    # สำรองสถานะล่าสุดก่อนส่งข้อความออก LINE (แบบ Async และมี Throttling)
     # ช่วยกันข้อมูลรอบ/คู่ติดหาย แม้ LINE API timeout หรือบอทถูกรีสตาร์ทหลังประมวลผลแล้ว
     # ยกเว้นช่วงสั้น ๆ หลังคำสั่งล้าง round_backups ไม่งั้น reply ของคำสั่งล้างจะสร้างไฟล์ backup กลับมาทันที
     if not ROUND_BACKUP_SUPPRESS_UNTIL or time.time() >= ROUND_BACKUP_SUPPRESS_UNTIL:
-        save_round_backup_db(reason=f"before_line_send:{label}")
+        save_round_backup_db(reason=f"before_line_send:{label}", force=False)
 
     if not LINE_CHANNEL_ACCESS_TOKEN:
         print(f"{label} ERROR: missing LINE_CHANNEL_ACCESS_TOKEN")
@@ -6838,25 +6667,18 @@ def is_clear_round_backups_command(text: str) -> bool:
 
 def parse_credit_command(text):
     """
-    รองรับหลายรูปแบบ:
-      $+ 1 1000   $+1 1000   $+1 100
-      $- 1 1000   $-1 1000   $-1 100
-      +1 1000     -1 1000
-      +1/1000     -1/1000
+    $+ 1 1000
+    $- 1 1000
     """
-    raw = (text or "").strip()
+    m = re.match(r"^\$(\+|-)\s+(\d+)\s+(\d+)$", text.strip())
+    if not m:
+        return None
 
-    # รูปแบบที่มี $ นำหน้า: $+1 100 / $+ 1 100 / $-1 100 / $- 1 100
-    m = re.match(r"^\$\s*(\+|-)\s*(\d+)\s+(\d+)$", raw)
-    if m:
-        return {"op": m.group(1), "member_no": int(m.group(2)), "amount": int(m.group(3))}
-
-    # รูปแบบไม่มี $: +1 100 / -1 100 / +1/100 / -1/100
-    m = re.match(r"^(\+|-)\s*(\d+)\s*[/ ]\s*(\d+)$", raw)
-    if m:
-        return {"op": m.group(1), "member_no": int(m.group(2)), "amount": int(m.group(3))}
-
-    return None
+    return {
+        "op": m.group(1),
+        "member_no": int(m.group(2)),
+        "amount": int(m.group(3)),
+    }
 
 
 def parse_confirm_command(text):
@@ -6873,7 +6695,6 @@ def parse_confirm_command(text):
         "ต", "ติด", "ครับ", "เค", "จ้า", "ติดจ้า",
         "ตต", "ตด", "ตอด", "ตอก", "จ", "ติดครับ", "ติดด", "ติก",
         "ตอน","ตาม","แตก","ต้อง","ตัวเอง","ตืด","ตตต","ตื่น","ตัด",
-        "น","ตัว","จิด","ค","คน",
     }
 
     if clean in confirm_keywords:
@@ -8138,59 +7959,6 @@ def handle_credit_adjust(event, cmd):
 
 
 
-
-def parse_delete_user_command(text: str):
-    """
-    คำสั่งลบ ID ลูกค้าออกจากระบบ (เฉพาะหลังบ้าน/แอดมิน)
-    รูปแบบ:
-      ลบID 5
-      ลบ ID 5
-      ลบสมาชิก 5
-      ลบลูกค้า 5
-    """
-    raw = re.sub(r"\s+", " ", (text or "").strip())
-    m = re.match(r"^ลบ\s*(?:ID|id|ไอดี|สมาชิก|ลูกค้า)\s+(\d+)$", raw, flags=re.IGNORECASE)
-    if m:
-        return {"member_no": int(m.group(1))}
-    return None
-
-
-def handle_delete_user(event, cmd: dict) -> str:
-    """
-    ลบ user ออกจาก USERS dict และบันทึกลงไฟล์
-    ต้องเป็นหลังบ้านหรือแอดมินเท่านั้น
-    """
-    user_id = event.source.user_id
-
-    if not can_use_backoffice_command(event, user_id):
-        return "คำสั่งนี้ใช้ได้เฉพาะหลังบ้านหรือแอดมิน"
-
-    target = find_user_by_member_no(cmd["member_no"])
-    if not target:
-        return (
-            f"❌ ไม่พบสมาชิก ID {cmd['member_no']}\n"
-            f"ตรวจสอบ ID ให้ถูกต้องก่อนลบ"
-        )
-
-    target_line_id = target.get("user_id")
-    name = target.get("line_name") or target.get("name") or f"สมาชิก#{cmd['member_no']}"
-    credit = int(target.get("credit", 0) or 0)
-    member_no = target.get("member_no")
-
-    # ลบออกจาก USERS
-    with STATE_LOCK:
-        USERS.pop(target_line_id, None)
-        save_user_db()
-
-    return (
-        f"✅ ลบสมาชิกสำเร็จ\n\n"
-        f"ชื่อ: {name}\n"
-        f"ID: {member_no}\n"
-        f"เครดิตที่มีอยู่: {credit:,}\n\n"
-        f"⚠️ ข้อมูลสมาชิกนี้ถูกลบออกจากระบบแล้ว"
-    )
-
-
 def clear_pending_round_clear():
     """ล้างสถานะรอยืนยันคำสั่ง CR"""
     STATE["pending_clear"] = None
@@ -8962,7 +8730,7 @@ def create_post(event, offer):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
     if not STATE["opened"]:
-        return None  # บอทเงียบเมื่อรอบปิด ไม่แจ้งลูกค้า
+        return "ยังไม่เปิดรอบ จึงไม่รับโพสต์"
 
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่รับโพสต์เพิ่ม"
@@ -9169,7 +8937,7 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
     if not STATE["opened"]:
-        return None  # บอทเงียบเมื่อรอบปิด ไม่แจ้งลูกค้า
+        return "ปิดอยู่ หรือยังไม่เปิดรอบ จึงไม่สามารถติดได้"
 
     if STATE.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่สามารถติดเพิ่มได้"
@@ -10938,7 +10706,15 @@ def admin_list_report() -> str:
             or user.get("name")
             or fallback_name(uid)
         )
-        rows.append(f"{len(rows) + 1}. {name} | UID: {uid}")
+        member_no = info.get("member_no") or user.get("member_no") or "-"
+        added_at = info.get("added_at") or "-"
+        added_by_name = info.get("added_by_name") or "-"
+        uid_tail = uid[-8:] if len(uid) > 8 else uid
+        rows.append(
+            f"{len(rows) + 1}. {name}\n"
+            f"   ID สมาชิก: {member_no} | ที่มา: {source} | UID: ...{uid_tail}\n"
+            f"   เพิ่มเมื่อ: {added_at} | เพิ่มโดย: {added_by_name}"
+        )
 
     for uid in sorted(ADMIN_USER_IDS):
         display_admin_row(uid, ".env")
@@ -10959,8 +10735,9 @@ def admin_list_report() -> str:
         )
 
     return (
-        f"📋 รายชื่อแอดมิน {len(rows)} คน\n\n"
-        + "\n".join(rows)
+        "📋 รายชื่อแอดมินทั้งหมด\n"
+        f"รวม {len(rows)} คน | .env {total_env} คน | admins.json {total_dynamic} คน\n\n"
+        + "\n\n".join(rows)
     )
 
 
@@ -11073,67 +10850,6 @@ def add_admins_from_mentions(event, added_by_id: str):
         "แอดมินที่เพิ่มจะใช้คำสั่งแอดมินได้ทันที และยังอยู่หลังรีสตาร์ตบอท",
     ])
     return "\n".join(lines)
-
-
-def is_remove_admin_command(text: str) -> bool:
-    """ตรวจคำสั่ง ลบแอดมิน <UID>"""
-    clean = (text or "").strip()
-    clean = re.sub(r"^[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]+", "", clean)
-    return re.match(r"^ลบแอดมิน(?:\s+|$)", clean) is not None
-
-
-def parse_remove_admin_uid(text: str):
-    """ดึง UID จากคำสั่ง ลบแอดมิน <UID> คืน None ถ้าไม่พบ"""
-    clean = (text or "").strip()
-    m = re.match(r"^ลบแอดมิน\s+(\S+)", clean)
-    return m.group(1).strip() if m else None
-
-
-def remove_admin_by_uid(target_uid: str) -> str:
-    """ลบแอดมินด้วย UID ตรงๆ"""
-    if not target_uid:
-        return (
-            "⚠️ ลบแอดมินไม่สำเร็จ\n\n"
-            "รูปแบบที่ใช้ได้:\n"
-            "ลบแอดมิน <UID>\n\n"
-            "ตัวอย่าง:\n"
-            "ลบแอดมิน Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n"
-            "ดู UID ได้จากคำสั่ง List / เช็คแอดมิน"
-        )
-
-    admins = DYNAMIC_ADMINS.get("admins", {}) if isinstance(DYNAMIC_ADMINS, dict) else {}
-    user = USERS.get(target_uid, {}) if isinstance(USERS, dict) else {}
-    target_name = (
-        (admins.get(target_uid) or {}).get("line_name")
-        or user.get("line_name")
-        or user.get("name")
-        or fallback_name(target_uid)
-    )
-
-    if target_uid in ADMIN_USER_IDS:
-        return (
-            f"⚠️ ไม่สามารถลบ {target_name} ได้\n\n"
-            "แอดมินนี้ถูกตั้งค่าใน .env\n"
-            "ต้องแก้ไข ADMIN_USER_IDS ใน .env โดยตรง"
-        )
-
-    if target_uid not in admins:
-        return (
-            f"⚠️ ไม่พบ UID นี้ในรายชื่อแอดมิน\n\n"
-            f"UID: {target_uid}\n\n"
-            "ดู UID ที่ถูกต้องได้จากคำสั่ง List / เช็คแอดมิน"
-        )
-
-    del admins[target_uid]
-    DYNAMIC_ADMINS["updated_at"] = datetime.now().isoformat()
-    save_admin_db()
-
-    return (
-        f"✅ ลบแอดมินเรียบร้อย\n\n"
-        f"ชื่อ: {target_name}\n"
-        f"UID: {target_uid}\n\n"
-        "บันทึกลง admins.json แล้ว"
-    )
 
 
 # ======================================================
@@ -11635,68 +11351,6 @@ tr:hover td { background: rgba(255,255,255,.02); }
     </div>
   </div>
 
-  <!-- Section: การเชื่อมต่อ LINE -->
-  <div class="section" style="margin-top:20px">
-    <div class="section-header">
-      <div class="section-title"><span class="icon">🔗</span> รูปแบบการเชื่อมต่อ LINE OA</div>
-      <button class="btn btn-ghost" style="font-size:12px" onclick="testWebhook()">🔌 ทดสอบการเชื่อมต่อ</button>
-    </div>
-    <div style="padding:20px;display:grid;gap:16px">
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        <div>
-          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ความลับแชนแนล (Channel Secret)</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input id="inp-secret" type="password" value="" readonly
-              style="flex:1;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px;font-family:monospace">
-            <button onclick="toggleVis('inp-secret',this)" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">👁</button>
-          </div>
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">แชนแนลแอ็คเซสโทเคน (Channel Access Token)</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input id="inp-token" type="password" value="" readonly
-              style="flex:1;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px;font-family:monospace">
-            <button onclick="toggleVis('inp-token',this)" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">👁</button>
-          </div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
-        <div>
-          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ไลน์ออฟฟิเชียลแอคเค้าท์ (LINE OA Name)</label>
-          <input id="inp-oa-name" type="text" readonly
-            style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ไลน์ไอดี (LINE ID)</label>
-          <input id="inp-line-id" type="text" readonly
-            style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:6px">ชาแนลไอดี (Channel ID)</label>
-          <input id="inp-channel-id" type="text" readonly
-            style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
-        </div>
-      </div>
-
-      <div style="border-top:1px solid var(--border);padding-top:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <label style="font-size:12px;color:var(--text3)">สำหรับการตั้งค่าขั้นสูง Webhook และ Group ID</label>
-          <span id="webhook-status" style="font-size:12px;color:var(--text3)">ยังไม่ได้ทดสอบ</span>
-        </div>
-        <div style="display:flex;gap:8px">
-          <input id="inp-webhook-url" type="text" placeholder="https://your-server.app/callback"
-            style="flex:1;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text1);font-size:13px">
-          <button onclick="setWebhookUrl()" class="btn btn-primary" style="white-space:nowrap">🔗 ตั้งค่า</button>
-          <button onclick="testWebhook()" class="btn" style="background:var(--green2);color:#fff;white-space:nowrap">✅ Verify</button>
-        </div>
-        <div id="webhook-result" style="margin-top:10px;padding:12px;border-radius:8px;font-size:13px;display:none"></div>
-      </div>
-
-    </div>
-  </div>
-
 </main>
 
 <!-- Modal: เพิ่ม/แก้ไขเครดิต -->
@@ -11946,66 +11600,6 @@ document.addEventListener('keydown', e => {
 });
 
 loadDashboard();
-loadConnectionInfo();
-
-/* ── Connection Info ── */
-async function loadConnectionInfo() {
-  const r = await api('/admin/api/connection');
-  if (!r) return;
-  document.getElementById('inp-secret').value = r.channel_secret || '';
-  document.getElementById('inp-token').value = r.channel_token || '';
-  document.getElementById('inp-oa-name').value = r.oa_name || '-';
-  document.getElementById('inp-line-id').value = r.line_id || '-';
-  document.getElementById('inp-channel-id').value = r.channel_id || '-';
-  document.getElementById('inp-webhook-url').value = r.webhook_url || '';
-}
-
-function toggleVis(inputId, btn) {
-  const inp = document.getElementById(inputId);
-  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '🙈'; }
-  else { inp.type = 'password'; btn.textContent = '👁'; }
-}
-
-async function testWebhook() {
-  const statusEl = document.getElementById('webhook-status');
-  const resultEl = document.getElementById('webhook-result');
-  statusEl.textContent = '⏳ กำลังทดสอบ...';
-  statusEl.style.color = '#93c5fd';
-  resultEl.style.display = 'none';
-  const r = await api('/admin/api/webhook/verify', 'POST');
-  if (r && r.success) {
-    statusEl.textContent = '✅ เชื่อมต่อปกติ';
-    statusEl.style.color = '#86efac';
-    showWebhookResult('✅ Webhook ทำงานปกติ!  status: ' + r.statusCode, '#14532d', '#16a34a', '#86efac');
-  } else {
-    statusEl.textContent = '❌ เชื่อมต่อไม่ได้';
-    statusEl.style.color = '#fca5a5';
-    showWebhookResult('❌ ทดสอบไม่ผ่าน: ' + JSON.stringify(r), '#4c0519', '#dc2626', '#fca5a5');
-  }
-}
-
-async function setWebhookUrl() {
-  const url = document.getElementById('inp-webhook-url').value.trim();
-  if (!url) { toast('ใส่ Webhook URL ก่อน', 'error'); return; }
-  const resultEl = document.getElementById('webhook-result');
-  showWebhookResult('⏳ กำลังตั้งค่า...', '#1e3a5f', '#2563eb', '#93c5fd');
-  const r = await api('/admin/api/webhook/set', 'POST', {url});
-  if (r && r.ok) {
-    showWebhookResult('✅ ตั้งค่า Webhook URL สำเร็จ!  URL: ' + url, '#14532d', '#16a34a', '#86efac');
-    toast('ตั้งค่า Webhook สำเร็จ ✓');
-  } else {
-    showWebhookResult('❌ ตั้งค่าไม่สำเร็จ: ' + JSON.stringify(r), '#4c0519', '#dc2626', '#fca5a5');
-  }
-}
-
-function showWebhookResult(msg, bg, border, color) {
-  const el = document.getElementById('webhook-result');
-  el.style.display = 'block';
-  el.style.background = bg;
-  el.style.border = '1px solid ' + border;
-  el.style.color = color;
-  el.textContent = msg;
-}
 </script>
 </body>
 </html>"""
@@ -12124,245 +11718,6 @@ def admin_api_profit():
         total = int(PROFIT.get("total_profit", 0) or 0)
     rounds.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return {"ok": True, "rounds": rounds, "total_profit": total}
-
-
-
-@app.route("/admin/api/connection", methods=["GET"])
-def admin_api_connection():
-    if not check_admin_token(request):
-        return {"error": "Unauthorized"}, 401
-    public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-    # ดึงข้อมูล OA จาก LINE API
-    oa_name = "-"
-    line_id = "-"
-    channel_id = "-"
-    webhook_url = f"{public_url}/callback"
-    try:
-        resp = requests.get(
-            "https://api.line.me/v2/bot/info",
-            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
-            timeout=(3, 5),
-        )
-        if resp.status_code == 200:
-            info = resp.json()
-            oa_name = info.get("displayName") or "-"
-            line_id = info.get("basicId") or "-"
-            channel_id = str(info.get("userId") or "-")
-    except Exception:
-        pass
-    return {
-        "ok": True,
-        "channel_secret": LINE_CHANNEL_SECRET,
-        "channel_token": LINE_CHANNEL_ACCESS_TOKEN,
-        "oa_name": oa_name,
-        "line_id": line_id,
-        "channel_id": channel_id,
-        "webhook_url": webhook_url,
-    }
-
-
-@app.route("/admin/api/webhook/verify", methods=["POST"])
-def admin_api_webhook_verify():
-    if not check_admin_token(request):
-        return {"error": "Unauthorized"}, 401
-    try:
-        public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-        webhook_url = f"{public_url}/callback"
-        resp = requests.post(
-            "https://api.line.me/v2/bot/channel/webhook/test",
-            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
-            json={"webhookEndpoint": webhook_url},
-            timeout=(5, 10),
-        )
-        data = resp.json()
-        return {"success": data.get("success", False), "statusCode": data.get("statusCode"), "timestamp": data.get("timestamp")}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-
-@app.route("/admin/api/webhook/set", methods=["POST"])
-def admin_api_webhook_set():
-    if not check_admin_token(request):
-        return {"error": "Unauthorized"}, 401
-    try:
-        body = request.get_json(force=True, silent=True) or {}
-        url = (body.get("url") or request.args.get("url") or "").strip()
-        if not url:
-            public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-            url = f"{public_url}/callback"
-        resp = requests.put(
-            "https://api.line.me/v2/bot/channel/webhook/endpoint",
-            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
-            json={"webhookEndpoint": url},
-            timeout=(5, 10),
-        )
-        if resp.status_code == 200:
-            return {"ok": True, "webhook_url": url}
-        return {"ok": False, "status": resp.status_code, "body": resp.text[:300]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
-
-
-@app.route("/admin/webhook", methods=["GET"])
-def admin_webhook_page():
-    if not check_admin_token(request):
-        return "<h2>Unauthorized</h2>", 401
-    public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-    webhook_url = public_url + "/callback"
-    return f"""<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Webhook Manager</title>
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}}
-.card{{background:#1e293b;border-radius:16px;padding:32px;max-width:500px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4)}}
-h1{{font-size:20px;font-weight:700;margin-bottom:4px}}
-.sub{{font-size:13px;color:#94a3b8;margin-bottom:24px}}
-.urlbox{{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;font-size:13px;color:#38bdf8;word-break:break-all;margin-bottom:20px}}
-.lbl{{font-size:11px;color:#64748b;margin-bottom:6px;text-transform:uppercase}}
-.inp{{width:100%;padding:10px 12px;background:#0f172a;border:1px solid #475569;border-radius:8px;color:#e2e8f0;font-size:14px;margin-bottom:16px}}
-.btn{{width:100%;padding:13px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px}}
-.g{{background:#16a34a;color:#fff}}.g:hover{{background:#15803d}}
-.b{{background:#2563eb;color:#fff}}.b:hover{{background:#1d4ed8}}
-.result{{margin-top:16px;padding:14px;border-radius:8px;font-size:13px;white-space:pre-wrap;display:none}}
-.ok{{background:#14532d;border:1px solid #16a34a;color:#86efac}}
-.err{{background:#4c0519;border:1px solid #dc2626;color:#fca5a5}}
-.inf{{background:#1e3a5f;border:1px solid #2563eb;color:#93c5fd}}
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>🔗 LINE Webhook Manager</h1>
-  <p class="sub">จัดการ Webhook URL สำหรับ LINE OA</p>
-  <div class="lbl">Webhook URL ปัจจุบัน</div>
-  <div class="urlbox" id="currentUrl">{webhook_url}</div>
-  <button class="btn g" id="btnVerify">✅ ทดสอบ / ยืนยัน Webhook</button>
-  <hr style="border:none;border-top:1px solid #334155;margin:8px 0 16px">
-  <div class="lbl">ตั้งค่า Webhook URL ใหม่</div>
-  <input class="inp" id="newUrl" type="text" value="{webhook_url}" placeholder="https://your-domain.app/callback">
-  <button class="btn b" id="btnSet">🔗 ตั้งค่า Webhook URL</button>
-  <div class="result" id="result"></div>
-</div>
-<script>
-(function(){{
-  var token = document.currentScript ? "" : "";
-  // อ่าน token จาก URL
-  var params = new URLSearchParams(window.location.search);
-  var tok = params.get("token") || "";
-
-  document.getElementById("btnVerify").addEventListener("click", function(){{
-    showResult("⏳ กำลังทดสอบ...", "inf");
-    fetch("/admin/webhook/verify?token=" + encodeURIComponent(tok), {{method:"POST"}})
-      .then(function(r){{ return r.json(); }})
-      .then(function(d){{
-        if(d.success){{
-          showResult("✅ Webhook ทำงานปกติ!\\nstatus: " + d.statusCode + "\\ntime: " + d.timestamp, "ok");
-        }} else {{
-          showResult("❌ ทดสอบไม่ผ่าน\\n" + JSON.stringify(d, null, 2), "err");
-        }}
-      }})
-      .catch(function(e){{ showResult("❌ Error: " + e.message, "err"); }});
-  }});
-
-  document.getElementById("btnSet").addEventListener("click", function(){{
-    var url = document.getElementById("newUrl").value.trim();
-    if(!url){{ showResult("❌ กรุณาใส่ URL ก่อน", "err"); return; }}
-    showResult("⏳ กำลังตั้งค่า...", "inf");
-    var payload = JSON.stringify({{url: url}});
-    fetch("/admin/webhook/set?token=" + encodeURIComponent(tok) + "&url=" + encodeURIComponent(url), {{
-        method:"POST",
-        headers:{{"Content-Type":"application/json"}},
-        body: payload
-      }})
-      .then(function(r){{ return r.json(); }})
-      .then(function(d){{
-        if(d.ok){{
-          showResult("✅ ตั้งค่าสำเร็จ!\\nURL: " + url, "ok");
-          document.getElementById("currentUrl").textContent = url;
-        }} else {{
-          showResult("❌ ตั้งค่าไม่สำเร็จ\\n" + JSON.stringify(d, null, 2), "err");
-        }}
-      }})
-      .catch(function(e){{ showResult("❌ Error: " + e.message, "err"); }});
-  }});
-
-  function showResult(msg, cls){{
-    var el = document.getElementById("result");
-    el.style.display = "block";
-    el.className = "result " + cls;
-    el.textContent = msg;
-  }}
-}})();
-</script>
-</body>
-</html>""", 200
-
-
-@app.route("/admin/webhook/verify", methods=["POST"])
-def admin_webhook_verify():
-    if not check_admin_token(request):
-        return {"error": "Unauthorized"}, 401
-    try:
-        public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-        webhook_url = f"{public_url}/callback"
-        resp = requests.post(
-            "https://api.line.me/v2/bot/channel/webhook/test",
-            headers={
-                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={"webhookEndpoint": webhook_url},
-            timeout=(5, 10),
-        )
-        data = resp.json()
-        return {"success": data.get("success", False), "statusCode": data.get("statusCode"), "timestamp": data.get("timestamp"), "detail": data}
-    except Exception as e:
-        return {"success": False, "error": str(e)}, 500
-
-
-@app.route("/admin/webhook/set", methods=["POST"])
-def admin_webhook_set():
-    if not check_admin_token(request):
-        return {"error": "Unauthorized"}, 401
-    try:
-        # รับ URL จากทุกช่องทาง: query param, JSON body, form data
-        custom_url = (request.args.get("url") or "").strip()
-        if not custom_url:
-            try:
-                body = request.get_json(force=True, silent=True) or {}
-                custom_url = (body.get("url") or body.get("webhook_url") or "").strip()
-            except Exception:
-                pass
-        if not custom_url:
-            custom_url = (request.form.get("url") or "").strip()
-        if custom_url:
-            webhook_url = custom_url
-        else:
-            public_url = PUBLIC_URL.rstrip("/") if PUBLIC_URL else request.host_url.rstrip("/")
-            webhook_url = f"{public_url}/callback"
-
-        print(f"WEBHOOK SET: custom_url={custom_url!r} webhook_url={webhook_url!r}")
-
-        if not webhook_url:
-            return {"ok": False, "error": "ไม่พบ webhook URL"}, 400
-
-        resp = requests.put(
-            "https://api.line.me/v2/bot/channel/webhook/endpoint",
-            headers={
-                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={"webhookEndpoint": webhook_url},
-            timeout=(5, 10),
-        )
-        if resp.status_code == 200:
-            return {"ok": True, "webhook_url": webhook_url}
-        return {"ok": False, "status": resp.status_code, "body": resp.text[:500]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
 
 
 @app.route("/callback", methods=["POST"])
@@ -12590,8 +11945,6 @@ def is_backoffice_relevant_text(text: str, user_id: str = None) -> bool:
     # จึงไม่ปล่อยผ่าน quiet mode สำหรับหลังบ้าน/คำสั่งแอดมิน
     if is_add_admin_command(raw):
         return True
-    if is_remove_admin_command(raw):
-        return True
     if is_admin_list_command(raw):
         return True
     if is_credit_check_mention_command(raw):
@@ -12686,78 +12039,9 @@ def should_process_text_message(event, text: str) -> bool:
 
 # ======================================================
 # CLEAR ALL — ล้างสกอ / รอบทุกรอบ / Backup ทั้งหมด
-# ใช้ได้เฉพาะแอดมิน และต้องยืนยัน 2 ครั้ง
-# ======================================================
-def handle_clear_all(event, user_id):
-    global STATE, ROUNDS, ACTIVE_BASE_NO, POSTS, MATCHES, CLEAR_ALL_PENDING
-
-    now = time.time()
-
-    # ครั้งแรก — รอยืนยัน
-    if user_id not in CLEAR_ALL_PENDING or now - CLEAR_ALL_PENDING[user_id] > 60:
-        CLEAR_ALL_PENDING[user_id] = now
-        reply_text(
-            event.reply_token,
-            "⚠️ CLEAR ALL จะล้างทุกอย่างต่อไปนี้:\n"
-            "- สกอและคู่ทั้งหมด\n"
-            "- รอบทุกรอบ (ทุกฐาน)\n"
-            "- Backup ทั้งหมด\n"
-            "- ออเดอร์ทั้งหมด\n\n"
-            "⚠️ พิมพ์ CLEAR ALL อีกครั้งภายใน 60 วินาที เพื่อยืนยัน"
-        )
-        return
-
-    # ครั้งที่ 2 — ยืนยันแล้ว ล้างจริง
-    CLEAR_ALL_PENDING.pop(user_id, None)
-
-    with STATE_LOCK:
-        # ล้าง POSTS และ MATCHES ใน memory
-        POSTS.clear()
-        MATCHES.clear()
-
-        # ล้าง ROUNDS ทุกฐาน
-        for base_no in list(ROUNDS.keys()):
-            ROUNDS[base_no] = make_round_state(base_no)
-
-        # รีเซ็ต STATE กลับเป็นฐาน 1
-        ACTIVE_BASE_NO = "1"
-        STATE = ROUNDS["1"]
-
-        # รีเซ็ต ORDER
-        ORDER_STATE["next_order_no"] = ORDER_START_NO
-        ORDER_STATE["last_reset"] = datetime.now().isoformat()
-        try:
-            save_order_db()
-        except Exception as e:
-            print(f"CLEAR ALL save_order_db error: {e}")
-
-        # ล้าง round_backups
-        try:
-            if os.path.exists(ROUND_BACKUP_DIR):
-                import shutil
-                shutil.rmtree(ROUND_BACKUP_DIR)
-            os.makedirs(ROUND_BACKUP_DIR, exist_ok=True)
-        except Exception as e:
-            print(f"CLEAR ALL backup dir error: {e}")
-
-        # ล้าง slip_topups
-        try:
-            SLIP_TOPUPS["slips"] = {}
-            SLIP_TOPUPS["updated_at"] = datetime.now().isoformat()
-            save_slip_topup_db()
-        except Exception as e:
-            print(f"CLEAR ALL slip_topup error: {e}")
-
-    reply_text(
-        event.reply_token,
-        "✅ CLEAR ALL เสร็จสิ้น\n"
-        "ล้างสกอ / รอบทุกรอบ / Backup / ออเดอร์ ทั้งหมดแล้ว\n"
-        "พร้อมเปิดรอบใหม่ได้เลย"
-    )
-
-
 # ======================================================
 # CLEAR ALL — ล้างสกอ / รอบทุกรอบ / Backup ทั้งหมด
+# ใช้ได้เฉพาะแอดมิน และต้องยืนยัน 2 ครั้ง
 # ======================================================
 def handle_clear_all(event, user_id):
     global STATE, ROUNDS, ACTIVE_BASE_NO, POSTS, MATCHES, CLEAR_ALL_PENDING
@@ -12807,6 +12091,8 @@ def handle_clear_all(event, user_id):
         MATCHES.clear()
         for base_no in list(ROUNDS.keys()):
             ROUNDS[base_no] = make_round_state(base_no)
+            # ตั้งค่า backup_status: cleared เพื่อไม่ให้ restore_round_backup_db restore ข้อมูลเก่ากลับมา
+            ROUNDS[base_no]["backup_status"] = "cleared"
         ACTIVE_BASE_NO = "1"
         STATE = ROUNDS["1"]
         ORDER_STATE["next_order_no"] = ORDER_START_NO
@@ -12828,6 +12114,11 @@ def handle_clear_all(event, user_id):
             save_slip_topup_db()
         except Exception as e:
             print(f"CLEAR ALL slip_topup error: {e}")
+        
+        # หน่วงเวลา backup ป้องกันไฟล์ backup ใหม่ถูกสร้างขึ้นมาขณะส่งข้อความยืนยันเสร็จสิ้น
+        global ROUND_BACKUP_SUPPRESS_UNTIL
+        ROUND_BACKUP_SUPPRESS_UNTIL = time.time() + 60.0
+    
     reply_text(event.reply_token,
         "✅ CLEAR ALL เสร็จสิ้น\n\n"
         f"💰 คืนเครดิตลูกค้าแล้ว: {total_refunded_matches:,} บิล\n"
@@ -12916,15 +12207,6 @@ def handle_message(event):
             return
 
         reply_text(event.reply_token, add_admins_from_mentions(event, user_id))
-        return
-
-    if is_remove_admin_command(text):
-        if not can_use_backoffice_command(event, user_id):
-            reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะหลังบ้านหรือแอดมิน")
-            return
-
-        target_uid = parse_remove_admin_uid(text)
-        reply_text(event.reply_token, remove_admin_by_uid(target_uid))
         return
 
     if is_admin_list_command(text):
@@ -13123,24 +12405,23 @@ def handle_message(event):
         return
 
     if is_bank_account_request(text):
-        # ห้ามใช้คำสั่ง บช/บัญชี ในกลุ่มหลังบ้าน
+        # ห้ามใช้คำสั่ง บช/บัญชี หรือคำสั่งเกี่ยวกับบัญชีในกลุ่มหลังบ้าน/กลุ่มอื่น
+        # ให้ตอบเฉพาะหน้าบ้านหรือแชทส่วนตัวกับ OA เท่านั้น
         if not can_use_bank_account_request_in_chat(event):
             return
 
         if should_skip_bank_account_by_cooldown(event):
             return
 
-        if is_private_chat(event):
-            # แชทส่วนตัว: ส่งแค่ TEXT เลขบัญชีครบทุกบัญชี
-            reply_text(event.reply_token, bank_account_text())
-        else:
-            # กลุ่มหน้าบ้าน: ส่งแค่ Flex สีเขียว ไม่แสดงเลขบัญชีในกลุ่ม
-            # ไม่ push เข้าแชทส่วนตัว ให้ลูกค้าไปพิม บช ในแชท 1-1 เอง
-            reply_flex(
-                event.reply_token,
-                "ขอเลขบัญชี",
-                bank_account_backoffice_flex(),
-            )
+        # ส่ง 2 อย่างใน reply token เดียวกัน:
+        # 1) ข้อความบัญชีแบบ TEXT
+        # 2) FLEX ปุ่มสีเขียวสำหรับกดเข้าหลังบ้าน
+        reply_text_and_flex(
+            event.reply_token,
+            bank_account_text(),
+            "กดเข้าหลังบ้าน",
+            bank_account_backoffice_flex(),
+        )
         return
 
 
@@ -13194,13 +12475,6 @@ def handle_message(event):
         reply_text(event.reply_token, msg)
         return
 
-    # ลบ ID ลูกค้าออกจากระบบ
-    delete_user_cmd = parse_delete_user_command(text)
-    if delete_user_cmd:
-        msg = handle_delete_user(event, delete_user_cmd)
-        reply_text(event.reply_token, msg)
-        return
-
     # เปลี่ยนค่ายเมื่อเปิดผิด และคืนบิลเดิมของค่ายที่เปิดผิด
     change_camp_name = parse_change_camp_command(text)
     if change_camp_name:
@@ -13241,24 +12515,6 @@ def handle_message(event):
                 f"ค่ายนี้ยังมีรอบค้างอยู่: {camp_name}\n"
                 f"บิลห้ามทับชื่อค่ายเดิม เพื่อกันแจ้งผล/ย้อนผลผิดรอบ\n"
                 f"ให้ใช้ชื่อค่ายใหม่ หรือแจ้งผลค่ายเดิมให้จบก่อน"
-            )
-            return
-
-        # ตรวจว่ามีฐานใดเปิดอยู่ก่อน ถ้ามีต้องปิดก่อนเปิดรอบใหม่
-        opened_rounds = [
-            st for st in ROUNDS.values()
-            if st.get("opened") and not st.get("settled")
-        ]
-        if opened_rounds:
-            open_names = ", ".join(
-                st.get("camp_name") or f"ฐาน{st.get('base_no','?')}"
-                for st in opened_rounds
-            )
-            reply_text(
-                event.reply_token,
-                "❌ เปิดรอบไม่ได้\n\n"
-                f"ยังมีรอบที่เปิดอยู่: {open_names}\n\n"
-                "กรุณาปิดรอบนั้นก่อน แล้วค่อยเปิดรอบใหม่"
             )
             return
 
@@ -13530,7 +12786,7 @@ def handle_message(event):
             reply_text(event.reply_token, msg)
         return
 
-    # แจ้งผลตัวเลข ต้องยืนยัน 2 ครั้งฟหกหฟกฟหกฟหกฟหกฟหกฟหกฟหกฟหกฟหกฟกฟ
+    # แจ้งผลตัวเลข ต้องยืนยัน 2 ครั้ง
     result_value = parse_result_command(text)
     if result_value is not None:
         if not is_admin(user_id):
