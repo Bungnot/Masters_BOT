@@ -3630,8 +3630,7 @@ def scoreboard_rows_for_chat(chat_id: str = None):
     for base_no, st in (ROUNDS or {}).items():
         if not isinstance(st, dict):
             continue
-        if chat_id and st.get("chat_id") and st.get("chat_id") != chat_id:
-            continue
+        # แสดงทั้งหมดที่แจ้งผลแล้ว (ไม่ตรวจสอบ chat_id เพราะ chat_id อาจต่างกัน)
         if not st.get("round_id") or not st.get("settled"):
             continue
         if st.get("result") is None:
