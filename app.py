@@ -9819,6 +9819,7 @@ def settle_round(result_value: int):
         )
 
     save_user_db()
+    save_round_backup_db(reason="settle_round")  # ← บันทึก ROUNDS + SCORE
 
     # ส่ง Flex สรุปผลแบบ async เพื่อลดอาการหน่วง
     for uid, rows in user_rows.items():
@@ -9920,6 +9921,7 @@ def settle_round_all_jow(reason: str):
         user_net[taker_id] = user_net.get(taker_id, 0)
 
     save_user_db()
+    save_round_backup_db(reason="settle_round_all_jow")  # ← บันทึก ROUNDS + SCORE
 
     for uid, rows in user_rows.items():
         push_flex_async(
