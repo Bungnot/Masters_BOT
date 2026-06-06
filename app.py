@@ -1489,32 +1489,29 @@ def restore_round_backup_db():
         return False
 
     try:
-        # เลือก 1 รอบล่าสุด/สำคัญสุดต่อฐาน เพื่อไม่ให้รอบเก่าที่เคลียร์แล้วกลับมาปน
-        selected_by_base = {}
+        # เก็บทุกรอบที่มี priority > 0 (ไม่ใช่เพียงรอบล่าสุด)
+        # เพื่อให้เห็นประวัติรอบทั้งหมดที่เปิดมา
+        selected_payloads = []
         for payload in payloads:
             if not isinstance(payload, dict):
                 continue
             rid = str(payload.get("round_id") or "").strip()
             if not rid:
                 continue
-            base_no = normalize_base_no(payload.get("base_no") or (payload.get("state") or {}).get("base_no") or "1")
             priority = _round_restore_priority(payload)
             if priority <= 0:
                 continue
-            saved_at = str(payload.get("saved_at") or "")
-            key = (priority, saved_at)
-            old = selected_by_base.get(base_no)
-            if not old or key > old[0]:
-                selected_by_base[base_no] = (key, payload)
+            selected_payloads.append(payload)
 
-        if not selected_by_base:
+        if not selected_payloads:
             return False
 
         new_rounds = {}
         new_posts = {}
         new_matches = {}
 
-        for base_no, (_, payload) in selected_by_base.items():
+        for payload in selected_payloads:
+            base_no = normalize_base_no(payload.get("base_no") or (payload.get("state") or {}).get("base_no") or "1")
             raw_state = payload.get("state") or {}
             base_state = make_round_state(base_no)
             if isinstance(raw_state, dict):
@@ -1522,7 +1519,9 @@ def restore_round_backup_db():
             base_state["base_no"] = base_no
             if not base_state.get("round_id"):
                 base_state["round_id"] = payload.get("round_id")
-            new_rounds[base_no] = base_state
+            # ใช้ round_id เป็น key เพื่อเก็บรอบทั้งหมด ไม่ใช่ base_no
+            round_id = str(payload.get("round_id") or "")
+            new_rounds[round_id] = base_state
 
             if isinstance(payload.get("posts"), dict):
                 new_posts.update(payload.get("posts") or {})
@@ -1532,13 +1531,27 @@ def restore_round_backup_db():
         if new_rounds:
             ROUNDS = new_rounds
             # เลือกฐาน active: ให้รอบที่ยังเปิด/ยังไม่จบมาก่อน
+            # ค้นหา base_no จากรอบที่มี priority สูงสุด
             active_candidates = []
-            for base_no, st in ROUNDS.items():
+            for round_id, st in ROUNDS.items():
+                base_no = st.get("base_no") or "1"
                 priority = 3 if st.get("opened") and not st.get("settled") else (2 if st.get("settled") else 1)
                 active_candidates.append((priority, float(st.get("opened_at_ts") or 0), base_no))
             active_candidates.sort()
             ACTIVE_BASE_NO = active_candidates[-1][2]
-            STATE = ROUNDS[ACTIVE_BASE_NO]
+            # ค้นหารอบที่ใช้ฐาน active นี้
+            active_state = None
+            for st in ROUNDS.values():
+                if st.get("base_no") == ACTIVE_BASE_NO and (st.get("opened") or st.get("settled")):
+                    active_state = st
+                    break
+            if not active_state:
+                # ถ้าไม่มีรอบที่เปิด ให้ใช้รอบแรก
+                for st in ROUNDS.values():
+                    if st.get("base_no") == ACTIVE_BASE_NO:
+                        active_state = st
+                        break
+            STATE = active_state or ROUNDS.get(ACTIVE_BASE_NO) or make_round_state(ACTIVE_BASE_NO)
 
         POSTS.clear()
         POSTS.update(new_posts)
@@ -2676,10 +2689,6 @@ def bank_account_6_accounts_text() -> str:
         "🟢 ธนาคาร  : กสิกรไทย\n"
         "🔢 เลขบัญชี : 086-8-05582-0\n"
         "👤 ชื่อบัญชี : ธวัชชัย บุญศรี\n\n"
-        "─── บัญชีที่ 6 ───\n"
-        "🟢 ธนาคาร  : กสิกรไทย\n"
-        "🔢 เลขบัญชี : 165-2-90685-7\n"
-        "👤 ชื่อบัญชี : รัชนี ชูรัตน์\n\n"
         "━━━━━━━━━━━━━━\n"
         "⚠️ เพื่อป้องกันมิจฉาชีพ\n"
         "ชื่อผู้ฝาก-ถอน ต้องเป็นชื่อเดียวกันเท่านั้น ✅"
