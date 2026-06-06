@@ -101,7 +101,7 @@ EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SEC
 EASYSLIP_DEBUG_MODE = os.getenv("EASYSLIP_DEBUG_MODE", "1") == "1"
 
 # รายชื่อบัญชีที่อนุญาตให้เติมออโต้ (format: account_no|name_th|name_en|bank;...)
-AUTO_TOPUP_ACCOUNTS_STR = os.getenv("AUTO_TOPUP_ACCOUNTS", "").strip()
+AUTO_TOPUP_ACCOUNTS_STR = os.getenv("AUTO_TOPUP_ACCOUNTS", "3360616359|จารุณี สว่างวงษ์|Jarunee savangvong|กรุงไทย;1313942097|บุษบารัตน์ สว่างวงษ์|Butsabarat sahwangwong|กสิกรไทย;020351383037|บุษบารัตน์ สว่างวงษ์|Butsabarat sahwangwong|ออมสิน;020218276333|ธวัชชัย บุญศรี|Tawatchai Bunsri|ออมสิน;0868055820|ธวัชชัย บุญศรี|Tawatchai Bunsri|กสิกรไทย").strip()
 AUTO_TOPUP_ACCOUNTS_LIST = []
 if AUTO_TOPUP_ACCOUNTS_STR:
     for acc_str in AUTO_TOPUP_ACCOUNTS_STR.split(";"):
@@ -1211,10 +1211,8 @@ def _build_single_round_backup(round_id: str, base_no: str = None, state: dict =
         return None
 
     round_id = str(round_id)
-    round_posts = {
-        k: v for k, v in (POSTS or {}).items()
-        if isinstance(v, dict) and str(v.get("round_id") or "") == round_id
-    }
+    # Backup เฉพาะ MATCHES (แผลที่จับคู่สำเร็จ) ไม่ backup POSTS
+    round_posts = {}  # ไม่ backup POSTS
     round_matches = {
         k: v for k, v in (MATCHES or {}).items()
         if isinstance(v, dict) and str(v.get("round_id") or "") == round_id
@@ -2694,6 +2692,10 @@ def bank_account_6_accounts_text() -> str:
         "🟢 ธนาคาร  : กสิกรไทย\n"
         "🔢 เลขบัญชี : 086-8-05582-0\n"
         "👤 ชื่อบัญชี : ธวัชชัย บุญศรี\n\n"
+        "─── บัญชีที่ 6 ───\n"
+        "🟢 ธนาคาร  : กสิกรไทย\n"
+        "🔢 เลขบัญชี : 165-2-90685-7\n"
+        "👤 ชื่อบัญชี : รัชนี ชูรัตน์\n\n"
         "━━━━━━━━━━━━━━\n"
         "⚠️ เพื่อป้องกันมิจฉาชีพ\n"
         "ชื่อผู้ฝาก-ถอน ต้องเป็นชื่อเดียวกันเท่านั้น ✅"
