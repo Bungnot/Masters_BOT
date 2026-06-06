@@ -1491,12 +1491,17 @@ def restore_round_backup_db():
     try:
         # เก็บทุกรอบที่มี priority > 0 (ไม่ใช่เพียงรอบล่าสุด)
         # เพื่อให้เห็นประวัติรอบทั้งหมดที่เปิดมา
+        # แต่ไม่โหลดรอบที่มี backup_status: cleared (เป็นรอบที่ถูก CLEAR ALL ลบไปแล้ว)
         selected_payloads = []
         for payload in payloads:
             if not isinstance(payload, dict):
                 continue
             rid = str(payload.get("round_id") or "").strip()
             if not rid:
+                continue
+            # ไม่โหลดรอบที่ถูกลบแล้ว
+            state = payload.get("state") or {}
+            if isinstance(state, dict) and state.get("backup_status") == "cleared":
                 continue
             priority = _round_restore_priority(payload)
             if priority <= 0:
@@ -2689,6 +2694,10 @@ def bank_account_6_accounts_text() -> str:
         "🟢 ธนาคาร  : กสิกรไทย\n"
         "🔢 เลขบัญชี : 086-8-05582-0\n"
         "👤 ชื่อบัญชี : ธวัชชัย บุญศรี\n\n"
+        "─── บัญชีที่ 6 ───\n"
+        "🟢 ธนาคาร  : กสิกรไทย\n"
+        "🔢 เลขบัญชี : 165-2-90685-7\n"
+        "👤 ชื่อบัญชี : รัชนี ชูรัตน์\n\n"
         "━━━━━━━━━━━━━━\n"
         "⚠️ เพื่อป้องกันมิจฉาชีพ\n"
         "ชื่อผู้ฝาก-ถอน ต้องเป็นชื่อเดียวกันเท่านั้น ✅"
@@ -12256,11 +12265,14 @@ def handle_clear_all(event, user_id):
             print(f"CLEAR ALL save_user_db error: {e}")
         POSTS.clear()
         MATCHES.clear()
-        for base_no in list(ROUNDS.keys()):
-            ROUNDS[base_no] = make_round_state(base_no)
+        # ล้างทุกรอบโดยใช้ round_id เป็น key
+        for round_id in list(ROUNDS.keys()):
+            ROUNDS[round_id] = make_round_state(ROUNDS[round_id].get("base_no") or "1")
             # ตั้งค่า backup_status: cleared เพื่อไม่ให้ restore_round_backup_db restore ข้อมูลเก่ากลับมา
-            ROUNDS[base_no]["backup_status"] = "cleared"
+            ROUNDS[round_id]["backup_status"] = "cleared"
         ACTIVE_BASE_NO = "1"
+        # สร้างรอบเริ่มต้นใหม่สำหรับฐาน 1
+        ROUNDS["1"] = make_round_state("1")
         STATE = ROUNDS["1"]
         ORDER_STATE["next_order_no"] = ORDER_START_NO
         ORDER_STATE["last_reset"] = datetime.now().isoformat()
