@@ -10322,10 +10322,10 @@ def current_round_report():
         f"สถานะ: {status}\n"
         f"ราคาช่าง: {current_price_text()}\n"
         f"ผล: {STATE.get('result')}\n"
-        f"แผลสมบูรณ์รอคิดผล: {matched_count}\n"
+        f"แผลสมบูรณ์: {matched_count}\n"
         f"แผลที่คิดผลแล้ว: {settled_count}\n"
         f"แผลรอยืนยัน: {pending_count}\n"
-        f"แผล ชตย รอคิดผล: {no_price_only_count}\n"
+        f"แผล ชตย : {no_price_only_count}\n"
         f"แผลยกเลิก: {cancelled_count}"
         f"{pending_text}"
     )
