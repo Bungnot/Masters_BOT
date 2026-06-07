@@ -10612,18 +10612,18 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                             "align": "center",
                             "gravity": "center",
                             "wrap": False,
-                            "flex": 2,
+                            "flex": 1,
                             "color": "#1DB446"
                         },
                         {
                             "type": "text",
                             "text": price_text,
-                            "size": "xs",
+                            "size": "sm",
                             "align": "center",
                             "gravity": "center",
                             "wrap": True,
                             "weight": "bold",
-                            "flex": 1,
+                            "flex": 2,
                             "color": "#666666"
                         },
                         {
@@ -10633,7 +10633,7 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                             "align": "center",
                             "gravity": "center",
                             "wrap": False,
-                            "flex": 2,
+                            "flex": 1,
                             "color": "#ff334b"
                         }
                     ],
