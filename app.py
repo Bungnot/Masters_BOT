@@ -8214,7 +8214,6 @@ def request_clear_round_confirm(clear_by: str = "-", chat_id: str = None):
         "⚠️ ยืนยันการเคลียร์รอบ\n\n"
         "จะเคลียร์รอบนี้ ใช่หรือไม่?\n\n"
         f"ค่าย: {camp_name}\n"
-        f"ห้องรอบ: {round_chat_id}\n\n"
         f"บิลที่จะคืนเครดิต: {preview['refunded_matches']:,} รายการ\n"
         f"เครดิตที่จะคืนรวม: {preview['refunded_credit_total']:,} เครดิต\n"
         f"โพสต์ที่จะยกเลิก: {preview['cancelled_posts']:,} รายการ\n"
@@ -8353,7 +8352,6 @@ def clear_current_round_and_refund(clear_by: str = "-"):
     return (
         "✅ CR เคลียร์รอบเรียบร้อย\n\n"
         f"ค่ายที่เคลียร์: {old_camp_name}\n"
-        f"ห้องรอบเดิม: {old_chat_id}\n\n"
         f"คืนบิลแล้ว: {refunded_matches:,} รายการ\n"
         f"คืนเครดิตรวม: {refunded_credit_total:,} เครดิต\n"
         f"ยกเลิกโพสต์เดิม: {cancelled_posts:,} รายการ\n"
@@ -10318,7 +10316,6 @@ def current_round_report():
     return (
         f"CK | สถานะรอบปัจจุบัน\n\n"
         f"ค่าย: {STATE.get('camp_name') or '-'}\n"
-        f"ห้องรอบ: {STATE.get('chat_id') or '-'}\n"
         f"สถานะ: {status}\n"
         f"ราคาช่าง: {current_price_text()}\n"
         f"ผล: {STATE.get('result')}\n"
