@@ -10553,7 +10553,7 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                 {
                     "type": "text",
                     "text": "ฝั่งไล่ (ชนะ)",
-                    "size": "sm",
+                    "size": "xs",
                     "color": "#1DB446",
                     "weight": "bold",
                     "align": "center"
@@ -10561,7 +10561,7 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                 {
                     "type": "text",
                     "text": "ราคา/ยอด",
-                    "size": "sm",
+                    "size": "xs",
                     "color": "#111111",
                     "weight": "bold",
                     "align": "center"
@@ -10569,16 +10569,18 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                 {
                     "type": "text",
                     "text": "ฝั่งถอย (แพ้)",
-                    "size": "sm",
+                    "size": "xs",
                     "color": "#ff334b",
                     "weight": "bold",
                     "align": "center"
                 }
             ],
-            "paddingBottom": "10px"
+            "paddingBottom": "8px",
+            "paddingTop": "0px"
         },
         {
-            "type": "separator"
+            "type": "separator",
+            "margin": "none"
         }
     ]
 
@@ -10635,12 +10637,13 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                             "color": "#ff334b"
                         }
                     ],
-                    "paddingTop": "10px",
-                    "paddingBottom": "10px"
+                    "paddingTop": "5px",
+                    "paddingBottom": "5px"
                 },
                 {
                     "type": "separator",
-                    "color": "#f0f0f0"
+                    "color": "#f0f0f0",
+                    "margin": "none"
                 }
             ]
         })
@@ -10660,29 +10663,22 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                     "style": "italic"
                 }
             ],
-            "paddingTop": "10px"
+            "paddingTop": "5px",
+            "paddingBottom": "0px"
         })
 
     flex_dict = {
         "type": "bubble",
-        "size": "giga",
+        "size": "mega",
         "header": {
             "type": "box",
             "layout": "vertical",
             "contents": [
                 {
                     "type": "text",
-                    "text": "สรุปยอดเหล่าเซียน",
-                    "weight": "bold",
-                    "color": "#1DB446",
-                    "size": "sm"
-                },
-                {
-                    "type": "text",
                     "text": "listplay | ค่าย: " + (STATE.get('camp_name') or '-'),
                     "weight": "bold",
-                    "size": "xl",
-                    "margin": "md"
+                    "size": "md"
                 },
                 {
                     "type": "text",
@@ -10696,6 +10692,8 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
         "body": {
             "type": "box",
             "layout": "vertical",
+            "spacing": "none",
+            "margin": "none",
             "contents": body_contents
         }
     }
