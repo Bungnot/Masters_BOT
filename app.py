@@ -10383,8 +10383,7 @@ def current_round_report_flex():
                     "weight": "bold",
                     "size": "lg",
                     "color": "#1DB446",
-                    "margin": "none",
-                    "paddingBottom": "md"
+                    "margin": "md"
                 },
                 {
                     "type": "box",
@@ -10771,7 +10770,7 @@ def current_round_listplay_report(limit: int = 80) -> str:
 
     lines = [
         f"listplay | ค่าย: {STATE.get('camp_name') or '-'}",
-        f"แผลสมบูรณ์รอคิด!: {len(rows):,}",
+        f"จำนวนคู่รอผล: {len(rows):,}",
         "",
     ]
 
@@ -10958,7 +10957,7 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                 },
                 {
                     "type": "text",
-                    "text": f"แผลสมบูรณ์รอคิด!: {len(rows):,}",
+                    "text": f"จำนวนคู่รอผล: {len(rows):,}",
                     "size": "xs",
                     "color": "#aaaaaa",
                     "wrap": True
