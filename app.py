@@ -10345,6 +10345,20 @@ def current_round_report_flex():
         1 for m in MATCHES.values()
         if m.get("round_id") == current_round_id and m.get("status") == "settled"
     )
+    cancelled_count = sum(
+        1 for m in MATCHES.values()
+        if m.get("round_id") == current_round_id and m.get("status") == "cancelled"
+    )
+    no_price_only_count = sum(
+        1 for m in MATCHES.values()
+        if m.get("round_id") == current_round_id
+        and m.get("status") == "matched"
+        and m.get("only_when_no_price")
+    )
+    pending_count = 0
+    for p in POSTS.values():
+        if p.get("round_id") == current_round_id:
+            pending_count += sum(1 for t in p.get("takers", []) if is_waiting_status(t.get("status")))
 
     if STATE.get("settled"):
         status = "แจ้งผลแล้ว"
@@ -10354,141 +10368,237 @@ def current_round_report_flex():
         status = "ปิดแล้ว / รอราคาช่างหรือแจ้งผล"
 
     result_text = STATE.get("result") or "None"
+    price_text = current_price_text()
 
     return {
         "type": "bubble",
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "sm",
+            "spacing": "none",
             "contents": [
                 {
                     "type": "text",
                     "text": "CK | สถานะรอบปัจจุบัน",
                     "weight": "bold",
                     "size": "lg",
-                    "color": "#1DB446"
+                    "color": "#1DB446",
+                    "margin": "none",
+                    "paddingBottom": "md"
                 },
                 {
                     "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "margin": "md",
+                    "layout": "horizontal",
+                    "margin": "xs",
                     "contents": [
                         {
-                            "type": "box",
-                            "layout": "baseline",
-                            "margin": "sm",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "ค่าย:",
-                                    "color": "#666666",
-                                    "size": "sm",
-                                    "flex": 2
-                                },
-                                {
-                                    "type": "text",
-                                    "text": STATE.get("camp_name") or "-",
-                                    "wrap": True,
-                                    "color": "#111111",
-                                    "size": "sm",
-                                    "flex": 3,
-                                    "weight": "bold"
-                                }
-                            ]
+                            "type": "text",
+                            "text": "ค่าย:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
                         },
                         {
-                            "type": "box",
-                            "layout": "baseline",
-                            "margin": "sm",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "สถานะ:",
-                                    "color": "#666666",
-                                    "size": "sm",
-                                    "flex": 2
-                                },
-                                {
-                                    "type": "text",
-                                    "text": status,
-                                    "wrap": True,
-                                    "color": "#111111",
-                                    "size": "sm",
-                                    "flex": 3,
-                                    "weight": "bold"
-                                }
-                            ]
+                            "type": "text",
+                            "text": STATE.get("camp_name") or "-",
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "สถานะ:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
                         },
                         {
-                            "type": "box",
-                            "layout": "baseline",
-                            "margin": "sm",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "ผล:",
-                                    "color": "#666666",
-                                    "size": "sm",
-                                    "flex": 2
-                                },
-                                {
-                                    "type": "text",
-                                    "text": result_text,
-                                    "wrap": True,
-                                    "color": "#111111",
-                                    "size": "sm",
-                                    "flex": 3,
-                                    "weight": "bold"
-                                }
-                            ]
+                            "type": "text",
+                            "text": status,
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "ราคาช่าง:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
                         },
                         {
-                            "type": "box",
-                            "layout": "baseline",
-                            "margin": "sm",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "แผลสมบูรณ์รอคิดผล:",
-                                    "color": "#666666",
-                                    "size": "sm",
-                                    "flex": 2
-                                },
-                                {
-                                    "type": "text",
-                                    "text": str(matched_count),
-                                    "wrap": True,
-                                    "color": "#1DB446",
-                                    "size": "sm",
-                                    "flex": 3,
-                                    "weight": "bold"
-                                }
-                            ]
+                            "type": "text",
+                            "text": price_text,
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "ผล:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
                         },
                         {
-                            "type": "box",
-                            "layout": "baseline",
-                            "margin": "sm",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "แผลที่คิดผลแล้ว:",
-                                    "color": "#666666",
-                                    "size": "sm",
-                                    "flex": 2
-                                },
-                                {
-                                    "type": "text",
-                                    "text": str(settled_count),
-                                    "wrap": True,
-                                    "color": "#1DB446",
-                                    "size": "sm",
-                                    "flex": 3,
-                                    "weight": "bold"
-                                }
-                            ]
+                            "type": "text",
+                            "text": result_text,
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "แผลสมบูรณ์รอคิดผล:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
+                        },
+                        {
+                            "type": "text",
+                            "text": str(matched_count),
+                            "wrap": False,
+                            "color": "#1DB446",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "แผลที่คิดผลแล้ว:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
+                        },
+                        {
+                            "type": "text",
+                            "text": str(settled_count),
+                            "wrap": False,
+                            "color": "#1DB446",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "แผลรอยืนยัน:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
+                        },
+                        {
+                            "type": "text",
+                            "text": str(pending_count),
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "แผล ชตย รอคิดผล:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
+                        },
+                        {
+                            "type": "text",
+                            "text": str(no_price_only_count),
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "แผลยกเลิก:",
+                            "color": "#666666",
+                            "size": "xs",
+                            "flex": 2
+                        },
+                        {
+                            "type": "text",
+                            "text": str(cancelled_count),
+                            "wrap": False,
+                            "color": "#111111",
+                            "size": "xs",
+                            "flex": 3,
+                            "weight": "bold",
+                            "align": "right"
                         }
                     ]
                 }
@@ -10661,7 +10771,7 @@ def current_round_listplay_report(limit: int = 80) -> str:
 
     lines = [
         f"listplay | ค่าย: {STATE.get('camp_name') or '-'}",
-        f"แผลสมบูรณ์รอคิด: {len(rows):,}",
+        f"แผลสมบูรณ์รอคิด!: {len(rows):,}",
         "",
     ]
 
@@ -10848,7 +10958,7 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                 },
                 {
                     "type": "text",
-                    "text": f"แผลสมบูรณ์ รอคิด: {len(rows):,}",
+                    "text": f"แผลสมบูรณ์รอคิด!: {len(rows):,}",
                     "size": "xs",
                     "color": "#aaaaaa",
                     "wrap": True
