@@ -10404,8 +10404,7 @@ def current_round_report_flex():
                             "color": "#111111",
                             "size": "xs",
                             "flex": 3,
-                            "weight": "bold",
-                            "align": "right"
+                            "weight": "bold"
                         }
                     ]
                 },
@@ -10429,7 +10428,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10453,7 +10452,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10477,7 +10476,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10501,7 +10500,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10525,7 +10524,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10549,7 +10548,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10573,7 +10572,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 },
@@ -10597,7 +10596,7 @@ def current_round_report_flex():
                             "size": "xs",
                             "flex": 3,
                             "weight": "bold",
-                            "align": "right"
+
                         }
                     ]
                 }
