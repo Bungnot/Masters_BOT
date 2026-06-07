@@ -10435,7 +10435,15 @@ def _listplay_display_name(name: str) -> str:
     """ทำชื่อให้แสดงในบรรทัด listplay โดยไม่ให้ขึ้นบรรทัดใหม่/ยาวเกินไป"""
     text = re.sub(r"\s+", " ", str(name or "-")).strip()
     if len(text) > 28:
-        text = text[:28] + "..."
+        text = text[:25] + "..."
+    return text or "-"
+
+
+def _listplay_display_name_flex(name: str, max_length: int = 15) -> str:
+    """ทำชื่อให้แสดงใน FLEX Message listplay โดยตัดให้สั้นพอเพื่อให้สวยงาม"""
+    text = re.sub(r"\s+", " ", str(name or "-")).strip()
+    if len(text) > max_length:
+        text = text[:max_length - 3] + "..."
     return text or "-"
 
 
@@ -10506,6 +10514,193 @@ def current_round_listplay_report(limit: int = 80) -> str:
         lines.append(f"...อีก {len(rows) - limit:,} คู่")
 
     return "\n".join(lines).strip()
+
+
+def current_round_listplay_flex(limit: int = 80) -> dict:
+    """
+    สร้าง FLEX Message สำหรับ listplay โดยแสดงผล:
+    - ฝั่งซ้าย (ไล่/ชนะ): ชื่อผู้โพสที่ชนะ (maker_name)
+    - ตรงกลาง: ราคาเล่นและยอดเล่น
+    - ฝั่งขวา (ถอย/แพ้): ชื่อผู้โพสที่แพ้ (taker_name)
+    """
+    if STATE.get("round_id") is None:
+        return None
+
+    current_round_id = STATE.get("round_id")
+    rows = [
+        m for m in MATCHES.values()
+        if m.get("round_id") == current_round_id
+        and m.get("status") == "matched"
+    ]
+
+    def sort_key(match):
+        try:
+            return int(match.get("order_no", 0) or 0)
+        except Exception:
+            return 0
+
+    rows = sorted(rows, key=sort_key)
+
+    if not rows:
+        return None
+
+    # สร้าง body contents โดยแสดงแต่ละคู่
+    body_contents = [
+        {
+            "type": "box",
+            "layout": "horizontal",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "ฝั่งไล่ (ชนะ)",
+                    "size": "sm",
+                    "color": "#1DB446",
+                    "weight": "bold",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": "ราคา/ยอด",
+                    "size": "sm",
+                    "color": "#111111",
+                    "weight": "bold",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": "ฝั่งถอย (แพ้)",
+                    "size": "sm",
+                    "color": "#ff334b",
+                    "weight": "bold",
+                    "align": "center"
+                }
+            ],
+            "paddingBottom": "10px"
+        },
+        {
+            "type": "separator"
+        }
+    ]
+
+    # เพิ่มแต่ละคู่ที่จับคู่สำเร็จ
+    for m in rows[:limit]:
+        maker_name = _listplay_display_name_flex(m.get("maker_name") or user_display_name(m.get("maker_id")), max_length=15)
+        taker_name = _listplay_display_name_flex(m.get("taker_name") or user_display_name(m.get("taker_id")), max_length=15)
+        play_text = format_listplay_play_text(m)
+        
+        # สร้าง price/amount text
+        price_text = play_text
+        if m.get("is_custom_price") or m.get("is_two_digit_price"):
+            custom_price_text = format_match_price_text_for_active_list(m)
+            if custom_price_text and custom_price_text != "-":
+                price_text = f"{play_text}\n({custom_price_text})"
+
+        body_contents.append({
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": maker_name,
+                            "size": "xs",
+                            "align": "center",
+                            "gravity": "center",
+                            "wrap": False,
+                            "flex": 2,
+                            "color": "#1DB446"
+                        },
+                        {
+                            "type": "text",
+                            "text": price_text,
+                            "size": "xs",
+                            "align": "center",
+                            "gravity": "center",
+                            "wrap": True,
+                            "weight": "bold",
+                            "flex": 1,
+                            "color": "#666666"
+                        },
+                        {
+                            "type": "text",
+                            "text": taker_name,
+                            "size": "xs",
+                            "align": "center",
+                            "gravity": "center",
+                            "wrap": False,
+                            "flex": 2,
+                            "color": "#ff334b"
+                        }
+                    ],
+                    "paddingTop": "10px",
+                    "paddingBottom": "10px"
+                },
+                {
+                    "type": "separator",
+                    "color": "#f0f0f0"
+                }
+            ]
+        })
+
+    # ถ้ามีคู่เกิน limit ให้แสดงข้อความ
+    if len(rows) > limit:
+        body_contents.append({
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"...อีก {len(rows) - limit:,} คู่",
+                    "size": "xs",
+                    "align": "center",
+                    "color": "#aaaaaa",
+                    "style": "italic"
+                }
+            ],
+            "paddingTop": "10px"
+        })
+
+    flex_dict = {
+        "type": "bubble",
+        "size": "giga",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "สรุปยอดเหล่าเซียน",
+                    "weight": "bold",
+                    "color": "#1DB446",
+                    "size": "sm"
+                },
+                {
+                    "type": "text",
+                    "text": "listplay | ค่าย: " + (STATE.get('camp_name') or '-'),
+                    "weight": "bold",
+                    "size": "xl",
+                    "margin": "md"
+                },
+                {
+                    "type": "text",
+                    "text": f"จำนวนคู่รอผล: {len(rows):,}",
+                    "size": "xs",
+                    "color": "#aaaaaa",
+                    "wrap": True
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": body_contents
+        }
+    }
+
+    return flex_dict
 
 
 def users_report():
@@ -12514,7 +12709,11 @@ def handle_message(event):
             reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะหลังบ้านหรือแอดมิน")
             return
 
-        reply_text(event.reply_token, current_round_listplay_report())
+        flex = current_round_listplay_flex()
+        if flex:
+            reply_flex(event.reply_token, "listplay", flex)
+        else:
+            reply_text(event.reply_token, current_round_listplay_report())
         return
 
     score_clean = re.sub(r"\s+", "", (text or "").strip()).lower()
