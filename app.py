@@ -10331,6 +10331,172 @@ def current_round_report():
     )
 
 
+def current_round_report_flex():
+    """สร้าง FLEX Message สำหรับคำสั่ง CK"""
+    if STATE.get("round_id") is None:
+        return None
+
+    current_round_id = STATE.get("round_id")
+    matched_count = sum(
+        1 for m in MATCHES.values()
+        if m.get("round_id") == current_round_id and m.get("status") == "matched"
+    )
+    settled_count = sum(
+        1 for m in MATCHES.values()
+        if m.get("round_id") == current_round_id and m.get("status") == "settled"
+    )
+
+    if STATE.get("settled"):
+        status = "แจ้งผลแล้ว"
+    elif STATE.get("opened"):
+        status = "เปิดรับอยู่"
+    else:
+        status = "ปิดแล้ว / รอราคาช่างหรือแจ้งผล"
+
+    result_text = STATE.get("result") or "None"
+
+    return {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "CK | สถานะรอบปัจจุบัน",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#1DB446"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "margin": "sm",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "ค่าย:",
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": STATE.get("camp_name") or "-",
+                                    "wrap": True,
+                                    "color": "#111111",
+                                    "size": "sm",
+                                    "flex": 3,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "margin": "sm",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "สถานะ:",
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": status,
+                                    "wrap": True,
+                                    "color": "#111111",
+                                    "size": "sm",
+                                    "flex": 3,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "margin": "sm",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "ผล:",
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": result_text,
+                                    "wrap": True,
+                                    "color": "#111111",
+                                    "size": "sm",
+                                    "flex": 3,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "margin": "sm",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "แผลสมบูรณ์รอคิดผล:",
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": str(matched_count),
+                                    "wrap": True,
+                                    "color": "#1DB446",
+                                    "size": "sm",
+                                    "flex": 3,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "margin": "sm",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "แผลที่คิดผลแล้ว:",
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": str(settled_count),
+                                    "wrap": True,
+                                    "color": "#1DB446",
+                                    "size": "sm",
+                                    "flex": 3,
+                                    "weight": "bold"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+
 def is_match_list_command(text: str) -> bool:
     clean = re.sub(r"\s+", "", (text or "").strip()).lower()
     return clean in {
@@ -10495,7 +10661,7 @@ def current_round_listplay_report(limit: int = 80) -> str:
 
     lines = [
         f"listplay | ค่าย: {STATE.get('camp_name') or '-'}",
-        f"จำนวนคู่รอผล: {len(rows):,}",
+        f"แผลสมบูรณ์รอคิด: {len(rows):,}",
         "",
     ]
 
@@ -10682,7 +10848,7 @@ def current_round_listplay_flex(limit: int = 80) -> dict:
                 },
                 {
                     "type": "text",
-                    "text": f"จำนวนคู่รอผล: {len(rows):,}",
+                    "text": f"แผลสมบูรณ์ รอคิด: {len(rows):,}",
                     "size": "xs",
                     "color": "#aaaaaa",
                     "wrap": True
@@ -12691,7 +12857,11 @@ def handle_message(event):
             reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะหลังบ้านหรือแอดมิน")
             return
 
-        reply_text(event.reply_token, current_round_report())
+        flex = current_round_report_flex()
+        if flex:
+            reply_flex(event.reply_token, "สถานะรอบปัจจุบัน", flex)
+        else:
+            reply_text(event.reply_token, current_round_report())
         return
 
     if is_match_list_command(text):
