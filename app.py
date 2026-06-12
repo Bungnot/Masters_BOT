@@ -12860,18 +12860,22 @@ def handle_message(event):
             )
             return
 
-        # ตรวจสอบว่ามีค่ายอื่นเปิดอยู่หรือไม่ (ห้ามเปิดค่ายใหม่ ตราบใดที่ค่ายเดิมยังเปิด)
-        opened_base_no, opened_camp_name, opened_state = get_any_opened_round()
-        if opened_base_no:
+        # ตรวจสอบว่ามีรอบที่ยังไม่ settled อยู่หรือไม่ (ทั้ง opened และ closed)
+        # ห้ามเปิดค่ายใหม่จนกว่าจะแจ้งผลค่ายเดิมให้เสร็จก่อน
+        for _base_no, _st in ROUNDS.items():
+            if not isinstance(_st, dict):
+                continue
+            if not _st.get("round_id") or _st.get("settled"):
+                continue
+            # มีรอบค้างอยู่ (ทั้งที่เปิดอยู่และปิดแล้วรอราคา/รอผล)
+            _camp = _st.get("camp_name") or "-"
+            _status = "เปิดอยู่" if _st.get("opened") else "ปิดแล้ว รอแจ้งผล"
             reply_text(
                 event.reply_token,
                 f"❌ เปิดรอบไม่ได้\n\n"
-                f"{opened_camp_name} ยังเปิดอยู่ (ฐาน{opened_base_no})\n\n"
-                f"ต้องปิดรอบก่อน:\n"
-                f"1. พิมพ์: ปิด {opened_camp_name}\n"
-                f"2. แจ้งราคาช่าง\n"
-                f"3. แจ้งเริ่มต้น\n\n"
-                f"จึงจะเปิด {camp_name} ได้"
+                f"ค่าย \"{_camp}\" ยังค้างอยู่ ({_status})\n\n"
+                f"ต้องแจ้งผลค่าย \"{_camp}\" ให้เสร็จก่อน\n"
+                f"แล้วจึงจะเปิด \"{camp_name}\" ได้"
             )
             return
 
