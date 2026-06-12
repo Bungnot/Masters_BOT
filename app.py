@@ -318,6 +318,13 @@ STATE["updated_at"] = STATE.get("updated_at") or None
 ROUNDS = {"1": STATE}
 ACTIVE_BASE_NO = "1"
 
+# ======================================================
+# Scoreboard History — เก็บทุกรอบที่ settled แล้วไว้แสดง สกอ
+# อ่านจาก ROUNDS ปัจจุบัน + รอบเก่าที่ archived ไว้ที่นี่
+# ไม่หายแม้จะเปิดรอบใหม่ทับฐานเดิม หรือทำ CR
+# ======================================================
+SCOREBOARD_HISTORY = {}   # key = round_id, value = snapshot dict
+
 
 def make_round_state(base_no: str):
     return {
@@ -1530,6 +1537,10 @@ def restore_round_backup_db():
 
         if new_rounds:
             ROUNDS = new_rounds
+            # populate SCOREBOARD_HISTORY จากรอบที่ settled ที่โหลดมา
+            for rid, st in ROUNDS.items():
+                if isinstance(st, dict) and st.get("settled") and st.get("result") is not None:
+                    archive_settled_round_to_history(st)
             # เลือกฐาน active: ให้รอบที่ยังเปิด/ยังไม่จบมาก่อน
             # ค้นหา base_no จากรอบที่มี priority สูงสุด
             active_candidates = []
@@ -2079,6 +2090,12 @@ def calculate_commission(amount: int) -> int:
 
 def add_profit_record(round_id: str, camp_name: str, result_value: int, profit_amount: int, order_rows: list, open_price: str = "-"):
     if profit_amount <= 0:
+        return
+
+    # กัน round_id ซ้ำ: ถ้า settle ถูกเรียกซ้ำด้วย round_id เดิม ห้ามบวกกำไรซ้ำ
+    existing_round_ids = {r.get("round_id") for r in PROFIT.get("rounds", [])}
+    if round_id and round_id in existing_round_ids:
+        print(f"ADD_PROFIT SKIP DUPLICATE: round_id={round_id} already recorded")
         return
 
     PROFIT["total_profit"] = int(PROFIT.get("total_profit", 0)) + int(profit_amount)
@@ -3633,39 +3650,85 @@ def scoreboard_status_from_round(st: dict) -> dict:
     return {"word": word, "icons": icons, "color": color}
 
 
-def scoreboard_rows_for_chat(chat_id: str = None):
-    """รวบรวมรอบที่แจ้งผลแล้ว เพื่อแสดงในคำสั่ง สกอ/รายการ"""
-    rows = []
-    for base_no, st in (ROUNDS or {}).items():
-        if not isinstance(st, dict):
-            continue
-        # แสดงทั้งหมดที่แจ้งผลแล้ว (ไม่ตรวจสอบ chat_id เพราะ chat_id อาจต่างกัน)
-        if not st.get("round_id") or not st.get("settled"):
-            continue
-        if st.get("result") is None:
-            continue
+def archive_settled_round_to_history(st: dict):
+    """
+    บันทึก snapshot รอบที่ settled แล้วลง SCOREBOARD_HISTORY
+    เรียกทันทีหลัง settle_round / settle_round_all_jow สำเร็จ
+    ใช้ round_id เป็น key กันซ้ำ
+    """
+    if not isinstance(st, dict):
+        return
+    round_id = st.get("round_id")
+    if not round_id or not st.get("settled"):
+        return
+    if round_id in SCOREBOARD_HISTORY:
+        return  # มีแล้ว ไม่ต้องบันทึกซ้ำ
+    SCOREBOARD_HISTORY[round_id] = {
+        "round_id": round_id,
+        "base_no": st.get("base_no") or "1",
+        "camp_name": st.get("camp_name") or "-",
+        "result": st.get("result"),
+        "base_min": st.get("base_min"),
+        "base_max": st.get("base_max"),
+        "price_mode": st.get("price_mode"),
+        "no_price_reason": st.get("no_price_reason"),
+        "two_digit_start": st.get("two_digit_start"),
+        "settled": True,
+        "opened_at_ts": st.get("opened_at_ts") or 0,
+        "updated_at": st.get("updated_at"),
+    }
 
+
+def scoreboard_rows_for_chat(chat_id: str = None):
+    """รวบรวมรอบที่แจ้งผลแล้ว จาก ROUNDS (memory) + SCOREBOARD_HISTORY (archive)"""
+    seen = set()
+    rows = []
+
+    def _row_from_state(st):
+        if not isinstance(st, dict):
+            return None
+        if not st.get("round_id") or not st.get("settled"):
+            return None
+        if st.get("result") is None:
+            return None
         status = scoreboard_status_from_round(st)
         try:
             opened_sort = float(st.get("opened_at_ts") or 0)
         except Exception:
             opened_sort = 0
-        rows.append({
-            "sort": (opened_sort, str(normalize_base_no(st.get("base_no") or base_no))),
-            "base_no": normalize_base_no(st.get("base_no") or base_no),
+        base_no = normalize_base_no(st.get("base_no") or "1")
+        return {
+            "sort": (opened_sort, base_no),
+            "base_no": base_no,
             "camp_name": st.get("camp_name") or "-",
             "price_text": state_public_price_text_no_start(st),
             "result_text": str(st.get("result") or "-"),
             "status_word": status.get("word"),
             "status_icons": status.get("icons"),
             "status_color": status.get("color"),
-        })
+        }
+
+    # 1. รอบที่ยังอยู่ใน ROUNDS (รอบปัจจุบันหรือรอบที่ยังไม่ถูก reuse)
+    for base_no, st in (ROUNDS or {}).items():
+        row = _row_from_state(st)
+        if row and st.get("round_id") not in seen:
+            seen.add(st.get("round_id"))
+            rows.append(row)
+
+    # 2. รอบเก่าจาก SCOREBOARD_HISTORY ที่ ROUNDS ไม่มีแล้ว
+    for round_id, st in (SCOREBOARD_HISTORY or {}).items():
+        if round_id in seen:
+            continue
+        row = _row_from_state(st)
+        if row:
+            seen.add(round_id)
+            rows.append(row)
 
     rows.sort(key=lambda x: x.get("sort") or (0, ""))
     return rows
 
 
-def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 25):
+def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
     """Flex สรุปสกอค่าย: ชื่อค่าย / ราคาช่าง / ผล+emoji พร้อมนับ ชนะ แพ้ จาว อัตโนมัติ"""
     rows = scoreboard_rows_for_chat(chat_id)
     if not rows:
@@ -9780,6 +9843,10 @@ def settle_round(result_value: int):
     price_text = current_price_text()
 
     for match in target_matches:
+        # guard: กัน match ที่ถูก settle ไปแล้วถูกคิดซ้ำ
+        if match.get("status") == "settled":
+            continue
+
         maker_id = match["maker_id"]
         taker_id = match["taker_id"]
         amount = match["amount"]
@@ -9912,6 +9979,7 @@ def settle_round(result_value: int):
 
     save_user_db()
     save_round_backup_db(reason="settle_round")  # ← บันทึก ROUNDS + SCORE
+    archive_settled_round_to_history(STATE)       # ← เก็บลง SCOREBOARD_HISTORY กันหาย
 
     # ส่ง Flex สรุปผลแบบ async เพื่อลดอาการหน่วง
     for uid, rows in user_rows.items():
@@ -9959,6 +10027,10 @@ def settle_round_all_jow(reason: str):
     user_net = {}
 
     for match in target_matches:
+        # guard: กัน match ที่ถูก settle ไปแล้วถูกคิดซ้ำ
+        if match.get("status") == "settled":
+            continue
+
         maker_id = match["maker_id"]
         taker_id = match["taker_id"]
         amount = int(match.get("amount", 0) or 0)
@@ -10014,6 +10086,7 @@ def settle_round_all_jow(reason: str):
 
     save_user_db()
     save_round_backup_db(reason="settle_round_all_jow")  # ← บันทึก ROUNDS + SCORE
+    archive_settled_round_to_history(STATE)               # ← เก็บลง SCOREBOARD_HISTORY กันหาย
 
     for uid, rows in user_rows.items():
         push_flex_async(
@@ -10244,6 +10317,13 @@ def rollback_round_result(rollback_by: str = "-"):
             + (f"\n...อีก {len(insufficient) - 20} รายการ" if len(insufficient) > 20 else "")
         )
 
+    rollback_at = now_text()
+
+    # ── ล็อก STATE ก่อนเสมอ กันแจ้งผลซ้อนระหว่างย้อนผล ──────────────────
+    # เซ็ต settled=True ค้างไว้ก่อน จนกว่า mutate ทุกอย่างเสร็จแล้วค่อยเซ็ต False
+    # ถ้า crash กลางทาง settled จะยังเป็น True → admin ต้องย้อนผลอีกครั้ง แทนที่จะแจ้งผลซ้ำ
+    STATE["pending_rollback_in_progress"] = True
+
     # ดึงเครดิตที่เคย payout กลับ
     for uid, debit in debits.items():
         user = USERS.get(uid)
@@ -10251,7 +10331,6 @@ def rollback_round_result(rollback_by: str = "-"):
             user["credit"] = int(user.get("credit", 0) or 0) - int(debit or 0)
 
     # เปลี่ยนบิลกลับไปรอแจ้งผลใหม่
-    rollback_at = now_text()
     for match in target_matches:
         history = match.setdefault("rollback_history", [])
         history.append({
@@ -10271,19 +10350,23 @@ def rollback_round_result(rollback_by: str = "-"):
         match["rolled_back_at"] = rollback_at
         match["rolled_back_by"] = rollback_by or "-"
 
+    # ลบกำไรออกจาก profit.json (atomic: ลบก่อน เซ็ต state หลัง)
     removed_profit, removed_profit_records = rollback_profit_for_round(current_round_id, rollback_by=rollback_by)
 
+    # เซ็ต STATE กลับหลังจาก mutate ทุกอย่างเสร็จแล้ว
     STATE["result"] = None
     STATE["settled"] = False
     STATE["opened"] = False
     STATE["updated_at"] = rollback_at
     STATE["pending_result"] = None
     STATE["pending_result_at"] = None
+    STATE.pop("pending_rollback_in_progress", None)
     clear_pending_rollback()
     clear_pending_price()
     clear_pending_round_clear()
 
     save_user_db()
+    save_round_backup_db(reason="rollback_round_result")
 
     return (
         f"✅ ย้อนผล ค่าย {STATE.get('camp_name') or '-'} เรียบร้อย\n"
@@ -11125,6 +11208,17 @@ settle_round = synchronized_state(settle_round)
 settle_round_all_jow = synchronized_state(settle_round_all_jow)
 handle_special_result_with_double_confirm = synchronized_state(handle_special_result_with_double_confirm)
 handle_result_with_double_confirm = synchronized_state(handle_result_with_double_confirm)
+# ── ฟังก์ชันที่ยังขาด lock (เพิ่มเติม) ───────────────────────────────────
+# rollback แก้เครดิต + กำไร + STATE พร้อมกัน ต้องใช้ lock เดียวกับ settle
+handle_rollback_result_command = synchronized_state(handle_rollback_result_command)
+rollback_round_result = synchronized_state(rollback_round_result)
+# ปรับเครดิตโดยแอดมิน แก้ credit ใน USERS โดยตรง
+handle_credit_adjust = synchronized_state(handle_credit_adjust)
+# ตั้งเริ่มต้นเลข 2 ตัว แก้ STATE
+set_two_digit_start = synchronized_state(set_two_digit_start)
+# ล้างกำไร / ล้างออเดอร์ แก้ PROFIT / ORDER_STATE
+reset_profit_report = synchronized_state(reset_profit_report)
+reset_order_report = synchronized_state(reset_order_report)
 
 # ======================================================
 # Webhook
@@ -12294,7 +12388,7 @@ def should_process_text_message(event, text: str) -> bool:
 # ใช้ได้เฉพาะแอดมิน และต้องยืนยัน 2 ครั้ง
 # ======================================================
 def handle_clear_all(event, user_id):
-    global STATE, ROUNDS, ACTIVE_BASE_NO, POSTS, MATCHES, CLEAR_ALL_PENDING
+    global STATE, ROUNDS, ACTIVE_BASE_NO, POSTS, MATCHES, CLEAR_ALL_PENDING, SCOREBOARD_HISTORY
     now = time.time()
     if user_id not in CLEAR_ALL_PENDING or now - CLEAR_ALL_PENDING[user_id] > 60:
         CLEAR_ALL_PENDING[user_id] = now
@@ -12340,6 +12434,7 @@ def handle_clear_all(event, user_id):
             print(f"CLEAR ALL save_user_db error: {e}")
         POSTS.clear()
         MATCHES.clear()
+        SCOREBOARD_HISTORY.clear()   # ล้างประวัติสกอทั้งหมด (CLEAR ALL เท่านั้น ไม่ใช่ CR)
         # ล้างทุกรอบโดยใช้ round_id เป็น key
         for round_id in list(ROUNDS.keys()):
             ROUNDS[round_id] = make_round_state(ROUNDS[round_id].get("base_no") or "1")
