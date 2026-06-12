@@ -219,9 +219,6 @@ PROCESSED_MESSAGE_TTL_SECONDS = 600
 # CLEAR ALL pending confirmation
 CLEAR_ALL_PENDING = {}
 
-# CLEAR ALL pending confirmation
-CLEAR_ALL_PENDING = {}
-
 def cleanup_processed_messages():
     while True:
         try:
@@ -4704,6 +4701,70 @@ def easyslip_extract_reference(data: dict, image_bytes: bytes):
     return extract_reference_from_slip2go(data, image_bytes)
 
 
+def easyslip_extract_trans_date(data: dict):
+    """
+    อ่านวันที่โอนจาก EasySlip V2 response
+    ลำดับการหา: data.rawSlip.transDate -> data.rawSlip.date -> data.rawSlip.datetime -> walk_json fallback
+    คืน string ISO หรือ None ถ้าหาไม่ได้
+    """
+    try:
+        raw = easyslip_get_raw_slip(data)
+        for field in ("transDate", "date", "datetime", "transferDate", "transactionDate", "transferredAt"):
+            val = raw.get(field)
+            if val:
+                return str(val).strip()
+    except Exception:
+        pass
+    # fallback: walk ทั้ง response หา field ที่ชื่อคล้าย date
+    date_keys = {"transdate", "date", "datetime", "transferdate", "transactiondate", "transferredat"}
+    for path, value in walk_json_values(data):
+        key = re.sub(r"[^a-z0-9]", "", path.split(".")[-1].lower())
+        if key in date_keys and value not in [None, ""]:
+            return str(value).strip()
+    return None
+
+
+def easyslip_check_slip_date_today(data: dict):
+    """
+    ตรวจสอบว่าสลิปเป็นวันปัจจุบัน (ตามเวลา server)
+    คืน (True, None) ถ้าผ่าน
+    คืน (False, reason_str) ถ้าไม่ผ่าน
+    คืน (None, None) ถ้าหาวันที่ไม่ได้ (ให้ผ่านไปก่อนเพื่อความปลอดภัย)
+    """
+    raw_date = easyslip_extract_trans_date(data)
+    if not raw_date:
+        # อ่านวันที่ไม่ได้ → ผ่านไปก่อน (conservative: ไม่บล็อก)
+        return None, None
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    # รองรับหลายรูปแบบ: ISO 2025-06-12T15:30:00, 2025-06-12, 20250612, 12/06/2025
+    try:
+        # ISO / datetime
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", raw_date)
+        if m:
+            slip_date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+            if slip_date == today_str:
+                return True, None
+            return False, f"สลิปวันที่ {slip_date} ไม่ตรงกับวันนี้ ({today_str})"
+        # compact: 20250612
+        m2 = re.search(r"(\d{4})(\d{2})(\d{2})", raw_date)
+        if m2:
+            slip_date = f"{m2.group(1)}-{m2.group(2)}-{m2.group(3)}"
+            if slip_date == today_str:
+                return True, None
+            return False, f"สลิปวันที่ {slip_date} ไม่ตรงกับวันนี้ ({today_str})"
+        # dd/mm/yyyy หรือ dd-mm-yyyy
+        m3 = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})", raw_date)
+        if m3:
+            slip_date = f"{m3.group(3)}-{m3.group(2).zfill(2)}-{m3.group(1).zfill(2)}"
+            if slip_date == today_str:
+                return True, None
+            return False, f"สลิปวันที่ {slip_date} ไม่ตรงกับวันนี้ ({today_str})"
+    except Exception:
+        pass
+    # parse ไม่ได้ → ผ่านไปก่อน
+    return None, None
+
+
 def easyslip_receiver_check_passed(data: dict) -> bool:
     """
     ตรวจบัญชีผู้รับจาก EasySlip V2 response
@@ -5362,6 +5423,7 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
     sender_short   = ""
     receiver_name  = ""
     receiver_short = ""
+    trans_date_text = ""
 
     if isinstance(slip_data, dict):
         try:
@@ -5372,6 +5434,25 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
             r = raw.get("receiver", {})
             receiver_name  = r.get("account", {}).get("name", {}).get("th") or r.get("account", {}).get("name", {}).get("en") or ""
             receiver_short = r.get("bank", {}).get("short") or ""
+        except Exception:
+            pass
+        # ── อ่านวันที่/เวลาโอนจากสลิป ─────────────────────────────────────
+        try:
+            raw_date = easyslip_extract_trans_date(slip_data)
+            if raw_date:
+                # แปลงให้อ่านง่าย: รองรับ ISO datetime และรูปแบบอื่น
+                import re as _re
+                m_iso = _re.search(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?", raw_date)
+                if m_iso:
+                    y, mo, d, hh, mm = m_iso.group(1), m_iso.group(2), m_iso.group(3), m_iso.group(4), m_iso.group(5)
+                    trans_date_text = f"{d}/{mo}/{y}  {hh}:{mm} น."
+                else:
+                    m_date = _re.search(r"(\d{4})-(\d{2})-(\d{2})", raw_date)
+                    if m_date:
+                        y, mo, d = m_date.group(1), m_date.group(2), m_date.group(3)
+                        trans_date_text = f"{d}/{mo}/{y}"
+                    else:
+                        trans_date_text = raw_date
         except Exception:
             pass
 
@@ -5444,6 +5525,7 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
             "contents": [
                 kv("จำนวน", f"{format_topup_amount(amount)} บาท", "#16A34A"),
                 kv("เครดิตที่ได้", f"+{credit_to_add:,}", "#16A34A"),
+                kv("วันที่/เวลาโอน", trans_date_text or "-", "#374151"),
                 kv("ชื่อ LINE", member_name),
                 kv("ID สมาชิก", f"#{member_no}"),
                 kv("เครดิตคงเหลือ", f"{new_credit:,}", "#16A34A"),
@@ -5860,7 +5942,6 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
         if msg == "slip_not_found" and isinstance(data, dict):
             if easyslip_is_bbl_pending(data):
                 return slip_bangkok_bank_wait_flex()
-            # 404 ทั่วไป = หาสลิปไม่เจอในระบบ
             error_code = easyslip_get_error_code(data)
             if error_code == "SLIP_NOT_FOUND":
                 return slip_not_found_wait_flex()
@@ -5889,11 +5970,20 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
         reason = f"ระบบยังไม่ยืนยันสลิป" + (f" ({error_code})" if error_code else "")
         return slip2go_reject_flex(data, "not_valid", reason)
 
-    # ── V2: ตรวจสลิปซ้ำจาก EasySlip (isDuplicate) ──────────────────────────
-    slip_ref, ref_path = easyslip_extract_reference(data, image_bytes)
+    # ── ตรวจวันที่สลิป: ต้องเป็นวันนี้เท่านั้น ──────────────────────────────
+    date_ok, date_reason = easyslip_check_slip_date_today(data)
+    if date_ok is False:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if EASYSLIP_DEBUG_MODE:
+            print(f"EASYSLIP DATE REJECT: {date_reason}")
+        return slip_fail_flex(
+            title="❌ สลิปไม่ใช่วันนี้",
+            reason=date_reason or f"ใช้ได้เฉพาะสลิปวันที่ {today_str} เท่านั้น",
+            suggestion="กรุณาส่งสลิปที่โอนวันนี้เท่านั้น ไม่รับสลิปย้อนหลังหรือล่วงหน้า",
+        )
 
-    # ── ตรวจบัญชีผู้รับ ทุกกรณี (ทั้ง duplicate และไม่ duplicate) ────────────
-    # สำคัญ: ต้องตรวจก่อนเติมเสมอ กันสลิปโอนบัญชีอื่นถูกเติมเครดิต
+    # ── ตรวจบัญชีผู้รับ ──────────────────────────────────────────────────────
+    # สำคัญ: ตรวจก่อนเติมเสมอ กันสลิปโอนบัญชีอื่นถูกเติมเครดิต
     if not easyslip_receiver_check_passed(data):
         if EASYSLIP_DEBUG_MODE:
             try:
@@ -5905,24 +5995,10 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
                 pass
         return slip2go_reject_flex(data, "receiver", "บัญชีผู้รับไม่ถูกต้องหรือไม่ตรงกับบัญชีร้าน")
 
-    # ── ตรวจสลิปซ้ำจากฐานข้อมูลของบอทเอง ───────────────────────────────────
-    with STATE_LOCK:
-        old = SLIP_TOPUPS.setdefault("slips", {}).get(slip_ref)
-    if old:
-        return slip_warning_flex(
-            title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
-            message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
-            slip_ref=slip_ref,
-            created_at=old.get("created_at", "-"),
-        )
+    # ── อ่าน slip_ref (ใช้กัน duplicate) ─────────────────────────────────────
+    slip_ref, ref_path = easyslip_extract_reference(data, image_bytes)
 
-    # ── EasySlip บอก isDuplicate แต่บอทยังไม่เคยเติม ─────────────────────────
-    # (เช่น ส่งสลิปครั้งแรก error ก่อนเติม แล้วส่งซ้ำ)
-    # ผ่านการตรวจบัญชีแล้ว → เติมได้ปกติ
-    if easyslip_is_duplicate(data):
-        if EASYSLIP_DEBUG_MODE:
-            print(f"EASYSLIP DUPLICATE but not in local DB: slip_ref={slip_ref}, receiver passed, proceeding to topup")
-
+    # ── อ่านยอดเงิน ──────────────────────────────────────────────────────────
     amount, amount_path = easyslip_extract_amount(data)
     if amount is None or amount < MIN_TOPUP_AMOUNT:
         return slip_fail_flex(
@@ -5942,16 +6018,22 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
     # ── Sync ชื่อ LINE ล่าสุด (background, ไม่บล็อก) ────────────────────────
     queue_profile_refresh(user_id)
 
+    # ── เช็คซ้ำ + เติมเครดิต: อยู่ใน lock เดียวกันตลอด กัน race condition ────
     with STATE_LOCK:
         slips = SLIP_TOPUPS.setdefault("slips", {})
+
+        # เช็คซ้ำรอบสุดท้าย (atomic — ไม่มีช่องว่างระหว่าง check กับ write)
         if slip_ref in slips:
-            old = slips.get(slip_ref, {})
+            old = slips[slip_ref]
             return slip_warning_flex(
                 title="⚠️ สลิปนี้ถูกเติมเครดิตไปแล้ว",
                 message="ระบบพบประวัติเติมเครดิตของสลิปนี้แล้ว",
                 slip_ref=slip_ref,
                 created_at=old.get("created_at", "-"),
             )
+
+        if EASYSLIP_DEBUG_MODE and easyslip_is_duplicate(data):
+            print(f"EASYSLIP DUPLICATE but not in local DB: slip_ref={slip_ref}, receiver passed, proceeding to topup")
 
         target = get_registered_topup_user(user_id)
         if not target:
@@ -5970,6 +6052,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
             "new_credit": target["credit"],
             "ref_path": ref_path,
             "amount_path": amount_path,
+            "slip_date": easyslip_extract_trans_date(data),
             "line_message_id": message_id,
             "created_at": now_text(),
             "easyslip_response": data,
@@ -12221,6 +12304,7 @@ def handle_clear_all(event, user_id):
             "- สกอและคู่ทั้งหมด\n"
             "- รอบทุกรอบ (ทุกฐาน)\n"
             "- Backup และออเดอร์ทั้งหมด\n\n"
+            "✅ ประวัติสลิปเติมเครดิตจะ ไม่ถูกลบ (กันสลิปซ้ำ)\n\n"
             "⚠️ พิมพ์ CLEAR ALL อีกครั้งภายใน 60 วินาที เพื่อยืนยัน")
         return
     CLEAR_ALL_PENDING.pop(user_id, None)
@@ -12278,12 +12362,7 @@ def handle_clear_all(event, user_id):
             os.makedirs(ROUND_BACKUP_DIR, exist_ok=True)
         except Exception as e:
             print(f"CLEAR ALL backup dir error: {e}")
-        try:
-            SLIP_TOPUPS["slips"] = {}
-            SLIP_TOPUPS["updated_at"] = datetime.now().isoformat()
-            save_slip_topup_db()
-        except Exception as e:
-            print(f"CLEAR ALL slip_topup error: {e}")
+        # หมายเหตุ: ไม่ล้าง SLIP_TOPUPS เพื่อกันสลิปซ้ำถูกเติมซ้ำหลัง CLEAR ALL
         
         # หน่วงเวลา backup ป้องกันไฟล์ backup ใหม่ถูกสร้างขึ้นมาขณะส่งข้อความยืนยันเสร็จสิ้น
         global ROUND_BACKUP_SUPPRESS_UNTIL
@@ -12294,6 +12373,7 @@ def handle_clear_all(event, user_id):
         f"💰 คืนเครดิตลูกค้าแล้ว: {total_refunded_matches:,} บิล\n"
         f"💰 เครดิตคืนรวม: {total_refunded_credit:,} เครดิต\n\n"
         "🗑️ ล้างสกอ / รอบทุกรอบ / Backup / ออเดอร์ ทั้งหมดแล้ว\n"
+        "🔒 ประวัติสลิปเติมเครดิตยังคงอยู่ (กันสลิปซ้ำ)\n"
         "พร้อมเปิดรอบใหม่ได้เลย")
 
 
@@ -13019,14 +13099,6 @@ def handle_message(event):
     # ======================================================
     # CLEAR ALL — ล้างสกอ / รอบ / Backup ทั้งหมด
     # ======================================================
-    if text.strip().upper() == "CLEAR ALL":
-        if not is_admin(user_id):
-            reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
-            return
-        handle_clear_all(event, user_id)
-        return
-
-    # CLEAR ALL
     if text.strip().upper() == "CLEAR ALL":
         if not is_admin(user_id):
             reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
