@@ -8,6 +8,12 @@ import threading
 import hashlib
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+    _TZ_THAI = ZoneInfo("Asia/Bangkok")
+except ImportError:
+    import pytz
+    _TZ_THAI = pytz.timezone("Asia/Bangkok")
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -2118,7 +2124,7 @@ def add_profit_record(round_id: str, camp_name: str, result_value: int, profit_a
 # ======================================================
 
 def now_text():
-    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    return datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y %H:%M:%S")
 
 
 def is_admin(user_id: str) -> bool:
@@ -3737,7 +3743,7 @@ def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
     win_count = sum(1 for r in rows if r.get("status_word") == "ชนะ")
     lose_count = sum(1 for r in rows if r.get("status_word") == "แพ้")
     jow_count = sum(1 for r in rows if r.get("status_word") == "จาว")
-    today_text = datetime.now().strftime("%d/%m/%Y")
+    today_text = datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y")
 
     table_contents = [
         {
@@ -4798,7 +4804,7 @@ def easyslip_check_slip_date_today(data: dict):
     if not raw_date:
         # อ่านวันที่ไม่ได้ → ผ่านไปก่อน (conservative: ไม่บล็อก)
         return None, None
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(tz=_TZ_THAI).strftime("%Y-%m-%d")
     # รองรับหลายรูปแบบ: ISO 2025-06-12T15:30:00, 2025-06-12, 20250612, 12/06/2025
     try:
         # ISO / datetime
@@ -6036,7 +6042,7 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
     # ── ตรวจวันที่สลิป: ต้องเป็นวันนี้เท่านั้น ──────────────────────────────
     date_ok, date_reason = easyslip_check_slip_date_today(data)
     if date_ok is False:
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = datetime.now(tz=_TZ_THAI).strftime("%Y-%m-%d")
         if EASYSLIP_DEBUG_MODE:
             print(f"EASYSLIP DATE REJECT: {date_reason}")
         return slip_fail_flex(
