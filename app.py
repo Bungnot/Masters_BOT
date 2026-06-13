@@ -4909,29 +4909,27 @@ def _check_receiver_against_account(data: dict, expected_no: str, expected_name_
             if isinstance(bank_obj, dict):
                 acct_no_digits = norm_no(bank_obj.get("account") or "")
                 if acct_no_digits:
-                    # exact match
+                    # ❌ แก้ไข: ต้องเป็น exact match เท่านั้น ไม่ใช้ suffix match
+                    # เพราะ suffix match ทำให้สลิปจากคนอื่นผ่านได้
                     if acct_no_digits == expected_no_digits:
                         return True
-                    # suffix match (masked เช่น xxx-x-x3329-x)
-                    suffix = min(len(acct_no_digits), len(expected_no_digits), 6)
-                    if suffix >= 4 and acct_no_digits[-suffix:] == expected_no_digits[-suffix:]:
-                        return True
+                    # ❌ ลบ suffix match ออก (บรรทัดเดิม 4915-4918)
 
             # ── 3. เทียบ PromptPay proxy (เบอร์โทร / เลขบัตร) ───────────────
             proxy_obj = acct.get("proxy") or {}
             if isinstance(proxy_obj, dict):
                 proxy_digits = norm_no(proxy_obj.get("account") or "")
                 if proxy_digits:
+                    # ❌ แก้ไข: ต้องเป็น exact match เท่านั้น
                     if proxy_digits == expected_no_digits:
                         return True
-                    suffix = min(len(proxy_digits), len(expected_no_digits), 6)
-                    if suffix >= 4 and proxy_digits[-suffix:] == expected_no_digits[-suffix:]:
-                        return True
+                    # ❌ ลบ suffix match ออก (บรรทัดเดิม 4927-4929)
 
             # ── 4. matchedAccount จาก EasySlip ───────────────────────────────
             matched = data.get("data", {}).get("matchedAccount") or {}
             if isinstance(matched, dict):
                 matched_digits = norm_no(matched.get("bankNumber") or "")
+                # ❌ แก้ไข: ต้องเป็น exact match เท่านั้น
                 if matched_digits and matched_digits == expected_no_digits:
                     return True
 
