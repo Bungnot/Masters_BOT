@@ -4845,9 +4845,11 @@ def easyslip_receiver_check_passed(data: dict) -> bool:
     expected_name_th = EASYSLIP_ACCOUNT_NAME_TH.strip()
     expected_name_en = EASYSLIP_ACCOUNT_NAME_EN.strip()
 
-    # ถ้าไม่ตั้งค่าเลยแม้แต่อย่างเดียว → ไม่ตรวจ (ผ่านทั้งหมด)
+    # ❌ แก้ไข: ถ้าไม่ตั้งค่าเลย → ปฏิเสธสลิป (ไม่ผ่าน)
     if not expected_no and not expected_name_th and not expected_name_en:
-        return True
+        if EASYSLIP_DEBUG_MODE:
+            print("EASYSLIP RECEIVER CHECK FAILED: ไม่มีการตั้งค่าบัญชีผู้รับ ให้ตั้ง EASYSLIP_ACCOUNT_NUMBER หรือ AUTO_TOPUP_ACCOUNTS ใน .env")
+        return False  # ← เปลี่ยนจาก True เป็น False
     
     return _check_receiver_against_account(data, expected_no, expected_name_th, expected_name_en)
 
