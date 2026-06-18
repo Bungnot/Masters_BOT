@@ -10486,17 +10486,17 @@ def current_round_report():
         pending_text += f"\nCR ที่รอยืนยัน: ค่าย {pending_clear.get('camp_name') or '-'}"
 
     return (
-        f"CK | สถานะรอบปัจจุบัน\n\n"
-        f"ค่าย: {STATE.get('camp_name') or '-'}\n"
-        f"สถานะ: {status}\n"
-        f"ราคาช่าง: {current_price_text()}\n"
-        f"ผล: {STATE.get('result')}\n"
-        f"แผลสมบูรณ์รอคิดผล: {matched_count}\n"
-        f"แผลที่คิดผลแล้ว: {settled_count}\n"
-        f"แผลรอยืนยัน: {pending_count}\n"
-        f"แผล ชตย รอคิดผล: {no_price_only_count}\n"
-        f"แผลยกเลิก: {cancelled_count}\n"
-        f"กำลังใช้อยู่รวม: {total_active_credit_all():,}"
+        f"📋 CK | สถานะรอบปัจจุบัน\n\n"
+        f"🏟️ ค่าย: {STATE.get('camp_name') or '-'}\n"
+        f"🚦 สถานะ: {status}\n"
+        f"💵 ราคาช่าง: {current_price_text()}\n"
+        f"🏁 ผล: {STATE.get('result')}\n"
+        f"✅ แผลสมบูรณ์รอคิดผล: {matched_count}\n"
+        f"💯 แผลที่คิดผลแล้ว: {settled_count}\n"
+        f"⏳ แผลรอยืนยัน: {pending_count}\n"
+        f"⚪ แผล ชตย รอคิดผล: {no_price_only_count}\n"
+        f"❌ แผลยกเลิก: {cancelled_count}\n"
+        f"💰 กำลังใช้อยู่รวม: {total_active_credit_all():,}"
         f"{pending_text}"
     )
 
