@@ -10729,50 +10729,106 @@ def active_credit_amount_for_user(user_id: str) -> int:
     return total
 
 
+def topup_capital_today_by_user(target_date_str: str = None) -> dict:
+    """
+    รวม 'ทุน' (ยอดเติมเครดิต) ของแต่ละลูกค้าในวันที่กำหนด (ค่าเริ่มต้น = วันนี้)
+
+    ทุน = ผลรวมยอดเติมจากสลิปทั้งหมดในวันนั้น
+    ตัวอย่าง: เติม 1000 จำนวน 3 รอบในวันเดียว -> ทุน = 3000
+
+    คืนค่าเป็น dict {user_id: ทุนรวมของวันนั้น}
+    โดยอ้างอิงวันจาก created_at ของสลิป (รูปแบบ dd/mm/YYYY HH:MM:SS ตามเวลาไทย)
+    """
+    if target_date_str is None:
+        target_date_str = datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y")
+
+    result = {}
+    slips = SLIP_TOPUPS.get("slips", {}) or {}
+    for slip in slips.values():
+        if not isinstance(slip, dict):
+            continue
+
+        created_at = slip.get("created_at") or ""
+        # created_at = "dd/mm/YYYY HH:MM:SS" -> เทียบเฉพาะส่วนวันที่
+        slip_date = created_at.split(" ")[0] if created_at else ""
+        if slip_date != target_date_str:
+            continue
+
+        user_id = slip.get("user_id")
+        if not user_id:
+            continue
+
+        try:
+            amount = int(slip.get("credit_added", 0) or 0)
+        except Exception:
+            amount = 0
+
+        if amount <= 0:
+            continue
+
+        result[user_id] = result.get(user_id, 0) + amount
+
+    return result
+
+
 def call_report():
     # CALL แสดงลูกค้าที่มีเครดิตคงเหลือ หรือมียอดที่กำลังใช้อยู่ในบิลรอผล
     all_rows = sorted(USERS.values(), key=lambda u: int(u.get("member_no", 999999)))
+
+    today_str = datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y")
+    capital_today_map = topup_capital_today_by_user(today_str)
 
     rows = []
     for u in all_rows:
         credit = user_credit_amount(u)
         active_amount = active_credit_amount_for_user(u.get("user_id"))
         total_amount = credit + active_amount
-        if total_amount > 0:
-            rows.append((u, credit, active_amount, total_amount))
+        capital_today = capital_today_map.get(u.get("user_id"), 0)
+        # แสดงลูกค้าที่มีเครดิต/กำลังใช้อยู่ หรือมีการเติมทุนวันนี้
+        if total_amount > 0 or capital_today > 0:
+            rows.append((u, credit, active_amount, total_amount, capital_today))
 
-    total_credit = sum(credit for _, credit, _, _ in rows)
-    total_active = sum(active_amount for _, _, active_amount, _ in rows)
+    total_credit = sum(credit for _, credit, _, _, _ in rows)
+    total_active = sum(active_amount for _, _, active_amount, _, _ in rows)
     total_all = total_credit + total_active
+    total_capital_today = sum(capital_today for _, _, _, _, capital_today in rows)
+
+    divider = "━━━━━━━━━━━━━━"
 
     lines = [
-        "CALL | รายชื่อลูกค้าที่มีเครดิต",
-        f"จำนวนลูกค้าที่มีเครดิต/กำลังใช้อยู่: {len(rows)} คน",
-        f"เครดิตคงเหลือรวม: {total_credit:,}",
-        f"กำลังใช้อยู่รวม: {total_active:,}",
-        f"เครดิตรวมทั้งหมด: {total_all:,}",
-        "",
+        "📋 CALL | ลูกค้าที่มีเครดิต",
+        f"👥 ทั้งหมด {len(rows)} คน",
+        divider,
+        f"💰 คงเหลือรวม : {total_credit:,}",
+        f"⏳ กำลังใช้รวม : {total_active:,}",
+        f"📊 เครดิตรวม : {total_all:,}",
+        f"🏦 ทุนวันนี้รวม : {total_capital_today:,}",
+        f"📅 {today_str}",
+        divider,
     ]
 
     if not rows:
         lines.append("ยังไม่มีลูกค้าที่มีเครดิต")
         return "\n".join(lines)
 
-    for u, credit, active_amount, total_amount in rows[:80]:
+    for u, credit, active_amount, total_amount, capital_today in rows[:80]:
         name = u.get("line_name") or u.get("name")
+
+        lines.append(f"#{u.get('member_no')}  {name}")
         if active_amount > 0:
-            lines.append(
-                f"ID {u.get('member_no')} | {name} | คงเหลือ {credit:,} | กำลังใช้ {active_amount:,} | รวม {total_amount:,}"
-            )
+            lines.append(f"  • คงเหลือ : {credit:,}")
+            lines.append(f"  • กำลังใช้ : {active_amount:,}")
+            lines.append(f"  • รวม : {total_amount:,}")
         else:
-            lines.append(
-                f"ID {u.get('member_no')} | {name} | เครดิต {credit:,}"
-            )
+            lines.append(f"  • เครดิต : {credit:,}")
+        if capital_today > 0:
+            lines.append(f"  • ทุนวันนี้ : {capital_today:,}")
+        lines.append("")
 
     if len(rows) > 80:
         lines.append(f"...อีก {len(rows) - 80} คน")
 
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
 
 
 def profit_report():
