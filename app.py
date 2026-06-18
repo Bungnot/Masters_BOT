@@ -10793,14 +10793,18 @@ def call_report():
     total_all = total_credit + total_active
     total_capital_today = sum(capital_today for _, _, _, _, capital_today in rows)
 
+    divider = "━━━━━━━━━━━━━━"
+
     lines = [
-        "CALL | รายชื่อลูกค้าที่มีเครดิต",
-        f"จำนวนลูกค้าที่มีเครดิต/กำลังใช้อยู่: {len(rows)} คน",
-        f"เครดิตคงเหลือรวม: {total_credit:,}",
-        f"กำลังใช้อยู่รวม: {total_active:,}",
-        f"เครดิตรวมทั้งหมด: {total_all:,}",
-        f"ทุนวันนี้รวม ({today_str}): {total_capital_today:,}",
-        "",
+        "📋 CALL | ลูกค้าที่มีเครดิต",
+        f"👥 ทั้งหมด {len(rows)} คน",
+        divider,
+        f"💰 คงเหลือรวม : {total_credit:,}",
+        f"⏳ กำลังใช้รวม : {total_active:,}",
+        f"📊 เครดิตรวม : {total_all:,}",
+        f"🏦 ทุนวันนี้รวม : {total_capital_today:,}",
+        f"📅 {today_str}",
+        divider,
     ]
 
     if not rows:
@@ -10809,22 +10813,22 @@ def call_report():
 
     for u, credit, active_amount, total_amount, capital_today in rows[:80]:
         name = u.get("line_name") or u.get("name")
+
+        lines.append(f"#{u.get('member_no')}  {name}")
         if active_amount > 0:
-            line = (
-                f"ID {u.get('member_no')} | {name} | คงเหลือ {credit:,} | กำลังใช้ {active_amount:,} | รวม {total_amount:,}"
-            )
+            lines.append(f"  • คงเหลือ : {credit:,}")
+            lines.append(f"  • กำลังใช้ : {active_amount:,}")
+            lines.append(f"  • รวม : {total_amount:,}")
         else:
-            line = (
-                f"ID {u.get('member_no')} | {name} | เครดิต {credit:,}"
-            )
+            lines.append(f"  • เครดิต : {credit:,}")
         if capital_today > 0:
-            line += f" | ทุนวันนี้ {capital_today:,}"
-        lines.append(line)
+            lines.append(f"  • ทุนวันนี้ : {capital_today:,}")
+        lines.append("")
 
     if len(rows) > 80:
         lines.append(f"...อีก {len(rows) - 80} คน")
 
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
 
 
 def profit_report():
