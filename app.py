@@ -10495,7 +10495,8 @@ def current_round_report():
         f"แผลที่คิดผลแล้ว: {settled_count}\n"
         f"แผลรอยืนยัน: {pending_count}\n"
         f"แผล ชตย รอคิดผล: {no_price_only_count}\n"
-        f"แผลยกเลิก: {cancelled_count}"
+        f"แผลยกเลิก: {cancelled_count}\n"
+        f"กำลังใช้อยู่รวม: {total_active_credit_all():,}"
         f"{pending_text}"
     )
 
@@ -10725,6 +10726,34 @@ def active_credit_amount_for_user(user_id: str) -> int:
             total += int(match.get("amount", 0) or 0)
         except Exception:
             pass
+
+    return total
+
+
+def total_active_credit_all() -> int:
+    """
+    ยอดเครดิตที่ถูกกันไว้รวมทั้งระบบ (กำลังใช้อยู่)
+    คิดจากบิลที่จับคู่แล้วและยังไม่คิดผล โดยนับทั้งฝั่งเจ้าของและฝั่งผู้ติด
+    ให้ตรงกับ "กำลังใช้อยู่รวม" ในคำสั่ง CALL
+    """
+    total = 0
+    for match in list(MATCHES.values()):
+        if not isinstance(match, dict):
+            continue
+        if match.get("status") != "matched":
+            continue
+
+        round_state = get_state_by_round_id(match.get("round_id"))
+        if round_state and round_state.get("settled"):
+            continue
+
+        try:
+            amount = int(match.get("amount", 0) or 0)
+        except Exception:
+            amount = 0
+
+        # นับทั้งฝั่งเจ้าของโพสต์และฝั่งผู้ติด (เหมือนผลรวมใน CALL)
+        total += amount * 2
 
     return total
 
