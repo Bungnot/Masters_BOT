@@ -1643,12 +1643,6 @@ def refund_all_pending_matches():
         print(f"[REFUND ERROR] {e}")
 
 
-# เรียกกู้คืนทันทีตอนโหลดไฟล์ ก่อน webhook เริ่มรับงาน
-restore_round_backup_db()
-
-# คืนบิลค้างอัตโนมัติตอนเริ่มบอท
-refund_all_pending_matches()
-
 # ฝั่งช่างไล่ / ชนะ
 CHASE_ALIASES = ["ชล", "ช่างไล่","ใล่","ช่างใล่", "ล", "ไล","ไล่"]
 
@@ -13424,11 +13418,17 @@ def handle_postback(event):
         return
 
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+# เรียกกู้คืนทันทีตอนโหลดไฟล์ ก่อน webhook เริ่มรับงาน
+restore_round_backup_db()
+
+# คืนบิลค้างอัตโนมัติตอนเริ่มบอท
+refund_all_pending_matches()
 
 threading.Thread(
     target=cleanup_processed_messages,
     daemon=True
 ).start()
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
