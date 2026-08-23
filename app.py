@@ -12500,7 +12500,7 @@ def is_round_control_command_text(text: str, user_id: str = None) -> bool:
         return True
     if parse_change_camp_command(raw):
         return True
-    if raw == "ปิด":
+    if raw == "ปิด" or re.match(r"^ปิด\s+\S", raw):
         return True
     if is_continue_round_command(raw):
         return True
@@ -13272,8 +13272,14 @@ def handle_message(event):
             )
         return
 
-    # ปิดรอบ
-    if text == "ปิด":
+    # ปิดรอบ — รองรับ "ปิด" (ปิดค่ายที่เปิดอยู่) และ "ปิด ชื่อค่าย" (fuzzy match)
+    _close_cmd = None
+    if text.strip() == "ปิด":
+        _close_cmd = "any"  # ปิดค่ายที่เปิดอยู่ค่ายเดียว หรือถามถ้ามีหลายค่าย
+    elif re.match(r"^ปิด\s+.+$", text.strip()):
+        _close_cmd = re.match(r"^ปิด\s+(.+)$", text.strip()).group(1).strip()
+
+    if _close_cmd is not None:
         if not is_admin(user_id):
             reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
             return
@@ -13282,31 +13288,64 @@ def handle_message(event):
             reply_text(event.reply_token, front_room_block_text("ปิดรอบ"))
             return
 
-        if STATE.get("round_id") is None:
-            reply_text(event.reply_token, "ยังไม่มีรอบให้ปิด")
+        # หาค่ายที่จะปิด
+        _open_states = [
+            (bn, st) for bn, st in ROUNDS.items()
+            if isinstance(st, dict) and st.get("opened") and st.get("round_id")
+        ]
+
+        if not _open_states:
+            reply_text(event.reply_token, "ยังไม่มีรอบที่เปิดอยู่")
             return
 
-        if not is_current_round_chat(event):
-            reply_text(event.reply_token, cross_room_block_text("ปิดรอบ"))
-            return
+        _target_st = None
+        _target_bn = None
 
-        if not STATE["opened"]:
-            reply_text(event.reply_token, "รอบนี้ปิดอยู่แล้ว")
-            return
+        if _close_cmd == "any":
+            if len(_open_states) == 1:
+                _target_bn, _target_st = _open_states[0]
+            else:
+                _camp_list = "\n".join(f"- {st.get('camp_name','-')}" for _,st in _open_states)
+                reply_text(event.reply_token, f"⚠️ มีหลายค่ายเปิดอยู่ กรุณาระบุชื่อค่ายที่ต้องการปิด\nเช่น: ปิด เมฆ\n\nค่ายที่เปิดอยู่:\n{_camp_list}")
+                return
+        else:
+            # fuzzy match ชื่อค่ายจาก substring
+            _keyword = _close_cmd
+            THAI_CONSONANT_RE = re.compile(r"[\u0E01-\u0E2E\u0E30\u0E32\u0E33\u0E40-\u0E44]")
+            for _bn, _st in _open_states:
+                _cname = _st.get("camp_name") or ""
+                # สร้าง token ทุก substring ≥2 ตัว
+                _tokens = set()
+                for _word in _camp_words(_cname):
+                    _n = len(_word)
+                    for _s in range(_n):
+                        for _e in range(_s + 2, _n + 1):
+                            _tok = _word[_s:_e]
+                            if THAI_CONSONANT_RE.search(_tok):
+                                _tokens.add(_tok)
+                if _keyword in _tokens or normalize_camp_key(_keyword) == normalize_camp_key(_cname):
+                    _target_bn, _target_st = _bn, _st
+                    break
+
+            if _target_st is None:
+                _camp_list = ", ".join(st.get("camp_name","-") for _,st in _open_states)
+                reply_text(event.reply_token, f"❌ ไม่พบค่าย \"{_keyword}\" ที่เปิดอยู่\nค่ายที่เปิดอยู่: {_camp_list}")
+                return
 
         with STATE_LOCK:
-            STATE["opened"] = False
-            STATE["closed_at"] = now_text()
-            STATE["updated_at"] = now_text()
-            camp = STATE["camp_name"] or "-"
+            _target_st["opened"] = False
+            _target_st["closed_at"] = now_text()
+            _target_st["updated_at"] = now_text()
+            _closed_camp = _target_st.get("camp_name") or "-"
+            save_round_backup_db(reason="round_closed")
 
         reply_text(
             event.reply_token,
-            f"❌❌ ปิด {base_label_pretty()} แล้ว ❌❌\n\n"
+            f"❌❌ ปิด {_closed_camp} แล้ว ❌❌\n\n"
             f"3  2  1 ไป๊!! 🚀🚀🚀\n\n"
-            f"⛔ หลังปิดไม่ติดทุกกรณี ⛔ \n"
-            f"ถ้าต้องการเปิดให้เล่นต่อ ให้แอดมินพิมพ์: เล่นต่อ {camp}\n"
-            f"🔘 {camp}"
+            f"⛔ หลังปิดไม่ติดทุกกรณี ⛔\n"
+            f"ถ้าต้องการเปิดให้เล่นต่อ ให้แอดมินพิมพ์: เล่นต่อ {_closed_camp}\n"
+            f"🔘 {_closed_camp}"
         )
         return
 
