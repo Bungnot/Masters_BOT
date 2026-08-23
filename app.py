@@ -6697,21 +6697,21 @@ def find_camp_in_text(text: str) -> tuple:
             if m:
                 rem = m.group(1).strip()
                 if _play_parseable(rem):
-                    return (camp_name, rem)
+                    return (camp_name, rem, base_no)
 
             # 2) ชื่อค่ายกลาง + ช่องว่าง + ตัวเลข
             m = re.match(rf"^(.+?)\s+{pat}\s+(\d[\d,]*.*)$", raw)
             if m:
                 rem = (m.group(1) + " " + m.group(2)).strip()
                 if _play_parseable(rem):
-                    return (camp_name, rem)
+                    return (camp_name, rem, base_no)
 
             # 3) ชื่อค่ายกลางติดตัวเลข
             m = re.match(rf"^(.+?)\s+{pat}(\d.*)$", raw)
             if m:
                 rem = (m.group(1) + m.group(2)).strip()
                 if _play_parseable(rem):
-                    return (camp_name, rem)
+                    return (camp_name, rem, base_no)
 
             # 4) ชื่อค่ายตามหลัง
             m = re.match(rf"^(.+?\d+)\s+{pat}\s*$", raw)
@@ -6720,18 +6720,25 @@ def find_camp_in_text(text: str) -> tuple:
                 if _play_parseable(rem):
                     return (camp_name, rem)
 
-    return (None, raw)
+    return (None, raw, None)
 
 
-def select_round_state_for_camp(camp_name: str):
-    """เลือก STATE ที่ตรงกับค่ายที่ระบุ"""
-    if not camp_name:
+def select_round_state_for_camp(camp_name: str, base_no: str = None):
+    """เลือก STATE ที่ตรงกับค่ายที่ระบุ ถ้ามี base_no ให้ใช้ base_no ก่อน"""
+    if not camp_name and not base_no:
         return None
-    for base_no, st in ROUNDS.items():
-        if not isinstance(st, dict):
-            continue
-        if st.get("opened") and normalize_camp_key(st.get("camp_name")) == normalize_camp_key(camp_name):
+    # ถ้ามี base_no ให้ค้นตรงๆ เลย (แม่นยำที่สุด)
+    if base_no and base_no in ROUNDS:
+        st = ROUNDS[base_no]
+        if isinstance(st, dict) and st.get("opened"):
             return st
+    # fallback ค้นด้วยชื่อ
+    if camp_name:
+        for _bn, st in ROUNDS.items():
+            if not isinstance(st, dict):
+                continue
+            if st.get("opened") and normalize_camp_key(st.get("camp_name")) == normalize_camp_key(camp_name):
+                return st
     return None
 
 
@@ -13596,7 +13603,7 @@ def handle_message(event):
 
     # ลูกค้าโพสต์ เช่น ชล500 / ชถ500
     # รองรับชื่อค่ายนำหน้าหรือตามหลัง เช่น "เจ ล 500" / "น้องเจ ล 500" / "ชล เจ 500"
-    _matched_camp, _play_text = find_camp_in_text(text)
+    _matched_camp, _play_text, _matched_base_no = find_camp_in_text(text)
     _offer_text = _play_text if _matched_camp else text
     offer = parse_offer(_offer_text)
 
@@ -13605,13 +13612,14 @@ def handle_message(event):
     if offer is None and _matched_camp:
         offer = parse_offer(text)
         if offer:
-            _matched_camp = None  # reset ค่าย ให้ระบบเลือก state เองตามปกติ
+            _matched_camp = None
+            _matched_base_no = None
 
     if offer:
-        # หา round_state ของค่ายที่ match
+        # หา round_state ของค่ายที่ match — ใช้ base_no โดยตรงเพื่อความแม่นยำ
         _post_round_state = None
         if _matched_camp:
-            _post_round_state = select_round_state_for_camp(_matched_camp)
+            _post_round_state = select_round_state_for_camp(_matched_camp, base_no=_matched_base_no)
             # ถ้าจับชื่อค่ายได้แต่ค้น state ไม่เจอ ให้แจ้งลูกค้า
             if _post_round_state is None:
                 _open_camp_names = ", ".join(
@@ -13622,7 +13630,6 @@ def handle_message(event):
                 return
         else:
             # ไม่ระบุชื่อค่าย: ถ้ามีค่ายเปิดอยู่แค่ค่ายเดียวให้ใช้ค่ายนั้น
-            # ถ้ามีหลายค่ายเปิดพร้อมกัน ต้องให้ลูกค้าระบุชื่อค่าย
             _open_states = [
                 st for st in ROUNDS.values()
                 if isinstance(st, dict) and st.get("opened") and st.get("round_id")
