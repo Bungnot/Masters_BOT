@@ -6672,14 +6672,20 @@ def find_camp_in_text(text: str) -> tuple:
         c = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", t or "")
         return bool(re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c))
 
+    _THAI_CONSONANT_RE = re.compile(r"[\u0E01-\u0E2E\u0E30\u0E32\u0E33\u0E40-\u0E44]")
+
     def _build_tokens(camp_name: str) -> list:
-        """สร้าง token ทุก substring ≥2 ตัวของทุกคำในชื่อค่าย เรียงยาวก่อน"""
+        """สร้าง token ทุก substring ≥2 ตัวของทุกคำในชื่อค่าย
+        กรองเฉพาะ token ที่มีพยัญชนะ/อักษรหลัก (ไม่ใช่สระ/วรรณยุกต์ล้วน)
+        เรียงจากยาวไปสั้น เพื่อจับคำยาวก่อน"""
         tokens = set()
         for word in _camp_words(camp_name):
             n = len(word)
             for start in range(n):
                 for end in range(start + 2, n + 1):
-                    tokens.add(word[start:end])
+                    tok = word[start:end]
+                    if _THAI_CONSONANT_RE.search(tok):
+                        tokens.add(tok)
         return sorted(tokens, key=len, reverse=True)
 
     for camp_name, base_no in open_camps:
