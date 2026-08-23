@@ -9215,23 +9215,24 @@ def is_reply_to_known_play_message(reply_message_id):
     """
     ใช้เฉพาะโหมดเงียบ:
     ตรวจว่าข้อความที่ถูก reply เป็นข้อความใน flow แผลเล่นหรือไม่
-    - โพสต์แผลต้นทาง เช่น ชล500 / ชถ200
-    - ข้อความ ต/ติด ของคนที่มาติด ซึ่งรอเจ้าของโพสต์ยืนยัน
+    รองรับหลายค่ายที่เปิดพร้อมกัน
     """
     if not reply_message_id:
         return False
 
+    _active_ids = _get_active_round_ids()
+
     if reply_message_id in POSTS:
         post = POSTS.get(reply_message_id) or {}
-        return post.get("round_id") == STATE.get("round_id")
+        return post.get("round_id") in _active_ids
 
     pending_post, pending_taker = find_pending_taker_by_reply_message_id(reply_message_id)
     if pending_post and pending_taker:
-        return pending_post.get("round_id") == STATE.get("round_id")
+        return pending_post.get("round_id") in _active_ids
 
     counter_post, counter_taker = find_counter_pending_by_reply_message_id(reply_message_id)
     if counter_post and counter_taker:
-        return counter_post.get("round_id") == STATE.get("round_id")
+        return counter_post.get("round_id") in _active_ids
 
     return False
 
@@ -9263,7 +9264,7 @@ def invalid_play_reply_warning(event, text: str):
 
     # กรณีลูกค้า reply โพสต์แผลต้นทาง แต่คำไม่ใช่ ต/ติด
     post = POSTS.get(quoted_message_id)
-    if post and post.get("round_id") == STATE.get("round_id"):
+    if post and post.get("round_id") in _get_active_round_ids():
         if user_id == post.get("maker_id"):
             return (
                 "❌ ยังไม่ใช่การยืนยันจับคู่ค่ะ\n\n"
@@ -9281,7 +9282,7 @@ def invalid_play_reply_warning(event, text: str):
 
     # กรณีเจ้าของโพสต์ reply ข้อความ ต/ติด ของลูกค้า แต่พิมพ์คำยืนยันผิด
     pending_post, pending_taker = find_pending_taker_by_reply_message_id(quoted_message_id)
-    if pending_post and pending_taker and pending_post.get("round_id") == STATE.get("round_id"):
+    if pending_post and pending_taker and pending_post.get("round_id") in _get_active_round_ids():
         if user_id == pending_post.get("maker_id"):
             return (
                 "❌ คำยืนยันจับคู่ไม่ถูกต้องค่ะ\n\n"
@@ -9296,7 +9297,7 @@ def invalid_play_reply_warning(event, text: str):
 
     # กรณีคนที่มาติดต้อง reply ข้อความที่เจ้าของโพสต์เสนอแก้ยอด เช่น ต100
     counter_post, counter_taker = find_counter_pending_by_reply_message_id(quoted_message_id)
-    if counter_post and counter_taker and counter_post.get("round_id") == STATE.get("round_id"):
+    if counter_post and counter_taker and counter_post.get("round_id") in _get_active_round_ids():
         if user_id == counter_taker.get("taker_id"):
             return (
                 "❌ คำยืนยันยอดที่เสนอไม่ถูกต้องค่ะ\n\n"
@@ -9307,6 +9308,24 @@ def invalid_play_reply_warning(event, text: str):
         return "รายการนี้รอคนที่มาติดยืนยันยอดที่เจ้าของโพสต์เสนอค่ะ"
 
     return None
+
+
+def _get_open_round_ids() -> set:
+    """คืน set ของ round_id ทั้งหมดที่ยังเปิดอยู่ (opened=True, settled=False)"""
+    return {
+        st.get("round_id")
+        for st in ROUNDS.values()
+        if isinstance(st, dict) and st.get("opened") and st.get("round_id") and not st.get("settled")
+    }
+
+
+def _get_active_round_ids() -> set:
+    """คืน set ของ round_id ที่ยังไม่ settled (ทั้งเปิดและปิดรอผล)"""
+    return {
+        st.get("round_id")
+        for st in ROUNDS.values()
+        if isinstance(st, dict) and st.get("round_id") and not st.get("settled")
+    }
 
 
 def handle_confirm(event, quoted_message_id, requested_amount=None):
@@ -9330,14 +9349,13 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     if not is_current_round_chat(event):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
-    if not STATE["opened"]:
+    # รองรับหลายค่าย: ถ้ามีค่ายใดค่ายหนึ่งเปิดอยู่ก็รับ confirm ได้
+    _open_round_ids = _get_open_round_ids()
+    _active_round_ids = _get_active_round_ids()
+    if not _open_round_ids:
         return None
 
-    if STATE.get("settled"):
-        return "รอบนี้แจ้งผลแล้ว ไม่สามารถติดเพิ่มได้"
-
     if not quoted_message_id:
-        # กลุ่มลูกค้าเยอะ: ถ้าพิมพ์ ต/ติด เฉย ๆ โดยไม่ได้ reply รายการ ให้บอทเงียบ
         if QUIET_GROUP_MODE:
             return None
         return "ต้องตอบกลับข้อความที่ต้องการติดเท่านั้น"
@@ -9346,7 +9364,7 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     # A โพสต์ ชล1000 -> B ติด -> A reply ว่า ต100 -> B reply ข้อความ ต100 ว่า ติด
     counter_post, counter_taker = find_counter_pending_by_reply_message_id(quoted_message_id)
     if counter_post and counter_taker:
-        if counter_post.get("round_id") != STATE.get("round_id"):
+        if counter_post.get("round_id") not in _active_round_ids:
             return "รายการนี้ไม่ใช่รอบปัจจุบัน"
 
         if user_id != counter_taker.get("taker_id"):
@@ -9392,7 +9410,7 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     # ถ้าคนอื่น เช่น นาย C ไปตอบข้อความติดของนาย B ให้เตือนทันที กันติดผิดรายการ
     pending_post, pending_taker = find_pending_taker_by_reply_message_id(quoted_message_id)
     if pending_post and pending_taker:
-        if pending_post.get("round_id") != STATE.get("round_id"):
+        if pending_post.get("round_id") not in _active_round_ids:
             return "รายการนี้ไม่ใช่รอบปัจจุบัน"
 
         if user_id != pending_post["maker_id"]:
@@ -9447,7 +9465,7 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
                 return None
             return "ไม่พบโพสต์ต้นทาง หรือโพสต์นี้ไม่ใช่รายการที่ระบบไว้"
 
-        if post.get("round_id") != STATE.get("round_id"):
+        if post.get("round_id") not in _open_round_ids:
             return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
 
         # โพสต์ 1 โพสต์ใช้เป็น "ราคาแม่แบบ" ได้เรื่อย ๆ
@@ -13095,6 +13113,20 @@ def handle_message(event):
 
         # หมายเหตุ: ระบบนี้เปิดหลายค่ายพร้อมกันได้ ไม่บล็อกรอบค้าง
         # ระบบจะเลือกฐานว่างให้อัตโนมัติ
+
+        # นับว่าชื่อค่ายนี้ถูกใช้ไปกี่ครั้งแล้ว (รวม settled) แล้วต่อ (2), (3)...
+        def _strip_camp_index(name: str) -> str:
+            """ตัด (2), (3) ท้ายออก เพื่อเปรียบเทียบชื่อฐาน"""
+            return re.sub(r"\s*\(\d+\)$", "", normalize_camp_key(name or "")).strip()
+
+        _base_name = _strip_camp_index(camp_name)
+        _name_count = sum(
+            1 for _st in ROUNDS.values()
+            if isinstance(_st, dict) and _st.get("round_id")
+            and _strip_camp_index(_st.get("camp_name", "")) == _base_name
+        )
+        if _name_count > 0:
+            camp_name = f"{camp_name} ({_name_count + 1})"
 
         with STATE_LOCK:
             # เปิดรอบใหม่อัตโนมัติในฐานว่าง ไม่ต้องให้แอดมินพิมพ์ ฐาน1/ฐาน2
