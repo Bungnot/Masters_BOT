@@ -9106,10 +9106,11 @@ def change_camp_and_refund_wrong_round(new_camp_name: str, chat_id: str = None):
     )
 
 
-def create_post(event, offer):
+def create_post(event, offer, round_state=None):
     """
     สำเร็จ = return None เพื่อให้บอทเงียบ
     error = return text เพื่อแจ้งปัญหา
+    round_state: ถ้าระบุจะใช้ state ของค่ายนั้น (กรณีเล่นหลายค่ายพร้อมกัน)
     """
     user_id = event.source.user_id
     user = ensure_user_from_event(event)
@@ -9117,13 +9118,16 @@ def create_post(event, offer):
     if not is_front_chat(event):
         return None
 
+    # ใช้ state ที่ระบุ หรือ STATE ปัจจุบัน
+    st = round_state if round_state is not None else STATE
+
     if not is_current_round_chat(event):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
-    if not STATE["opened"]:
+    if not st["opened"]:
         return None
 
-    if STATE.get("settled"):
+    if st.get("settled"):
         return "รอบนี้แจ้งผลแล้ว ไม่รับโพสต์เพิ่ม"
 
     if user_credit_amount(user) < offer["amount"]:
@@ -9141,10 +9145,10 @@ def create_post(event, offer):
 
     POSTS[post_id] = {
         "post_id": post_id,
-        "round_id": STATE["round_id"],
-        "base_no": STATE.get("base_no"),
-        "camp_name": STATE.get("camp_name"),
-        "chat_id": STATE.get("chat_id"),
+        "round_id": st["round_id"],
+        "base_no": st.get("base_no"),
+        "camp_name": st.get("camp_name"),
+        "chat_id": st.get("chat_id"),
         "maker_id": user_id,
         "plus": offer["plus"],
         "amount": offer["amount"],
@@ -9167,7 +9171,6 @@ def create_post(event, offer):
     }
 
     # สำรองทันทีหลังรับโพสต์แผลสำเร็จ
-    # กันเคสบอทรีสตาร์ท/อัปเดตโค้ดระหว่างที่ยังไม่ทันจับคู่
     save_round_backup_db(reason="post_created")
 
     # เงียบเมื่อรับโพสต์สำเร็จ
@@ -13008,6 +13011,59 @@ def handle_message(event):
         reply_text(event.reply_token, msg)
         return
 
+    # เปลี่ยนราคากลาง: เปลี่ยนราคา ชื่อค่าย 320-340
+    _chprice_m = re.match(r"^เปลี่ยนราคา\s+(.+?)\s+(\d+)\s*[-/]\s*(\d+)$", text.strip())
+    if _chprice_m:
+        _cp_camp = _chprice_m.group(1).strip()
+        _cp_a, _cp_b = int(_chprice_m.group(2)), int(_chprice_m.group(3))
+        if _cp_a > _cp_b:
+            _cp_a, _cp_b = _cp_b, _cp_a
+        if not is_admin(user_id):
+            reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
+            return
+        if not is_front_chat(event):
+            reply_text(event.reply_token, front_room_block_text("เปลี่ยนราคา"))
+            return
+        with STATE_LOCK:
+            _cp_state = None
+            for _bn, _st in ROUNDS.items():
+                if not isinstance(_st, dict):
+                    continue
+                if normalize_camp_key(_st.get("camp_name")) == normalize_camp_key(_cp_camp):
+                    if _st.get("round_id") and not _st.get("settled"):
+                        _cp_state = _st
+                        break
+            if _cp_state is None:
+                reply_text(event.reply_token, f"❌ ไม่พบค่ายที่ยังค้างอยู่: {_cp_camp}")
+                return
+            _cp_state["base_min"] = _cp_a
+            _cp_state["base_max"] = _cp_b
+            _cp_state["price_mode"] = "normal"
+            _cp_state["updated_at"] = now_text()
+            save_round_backup_db(reason="price_changed")
+        # แสดงรายการค่ายทั้งหมดที่เปิดอยู่
+        _all_open_lines = []
+        for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
+            if not isinstance(_st, dict):
+                continue
+            if _st.get("opened") and _st.get("round_id"):
+                _c = _st.get("camp_name") or "-"
+                _mn = _st.get("base_min")
+                _mx = _st.get("base_max")
+                if _mn is not None and _mx is not None:
+                    _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
+                else:
+                    _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
+        _camp_list = "\n\n".join(_all_open_lines) if _all_open_lines else f"{_cp_camp}\nช่าง  {_cp_a}-{_cp_b}"
+        reply_text(
+            event.reply_token,
+            f"✅ เปลี่ยนราคากลาง {_cp_camp} เป็น {_cp_a}-{_cp_b} แล้ว\n\n"
+            f"🚀🔥 รายการค่ายที่เปิดอยู่ 🔥🚀\n\n"
+            f"{_camp_list}\n\n"
+            f"🚀🚀🚀🚀🚀"
+        )
+        return
+
     # เปิดรอบ
     _open_cmd = parse_open_command(text)
     if _open_cmd is not None:
@@ -13072,20 +13128,45 @@ def handle_message(event):
             clear_pending_round_clear()
 
         if open_base_min is not None and open_base_max is not None:
+            # สร้างรายการค่ายทั้งหมดที่เปิดอยู่ (รวมค่ายที่เพิ่งเปิด)
+            _all_open_lines = []
+            for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
+                if not isinstance(_st, dict):
+                    continue
+                if _st.get("opened") and _st.get("round_id"):
+                    _c = _st.get("camp_name") or "-"
+                    _mn = _st.get("base_min")
+                    _mx = _st.get("base_max")
+                    if _mn is not None and _mx is not None:
+                        _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
+                    else:
+                        _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
+            _camp_list = "\n\n".join(_all_open_lines) if _all_open_lines else f"{camp_name}\nช่าง  {open_base_min}-{open_base_max}"
             reply_text(
                 event.reply_token,
-                f"🚀🔥 {base_label_pretty()} คุยกันเลย 🔥🚀\n\n"
-                f"ชื่อค่าย :  {camp_name}\n\n"
-                f"ราคากลาง :  {open_base_min}-{open_base_max}\n\n"
-                f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+                f"🚀🔥 คุยกันเลย 🔥🚀\n\n"
+                f"{_camp_list}\n\n"
+                f"🚀🚀🚀🚀🚀"
             )
         else:
+            _all_open_lines = []
+            for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
+                if not isinstance(_st, dict):
+                    continue
+                if _st.get("opened") and _st.get("round_id"):
+                    _c = _st.get("camp_name") or "-"
+                    _mn = _st.get("base_min")
+                    _mx = _st.get("base_max")
+                    if _mn is not None and _mx is not None:
+                        _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
+                    else:
+                        _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
+            _camp_list = "\n\n".join(_all_open_lines) if _all_open_lines else f"{camp_name}\nช่าง  ⛔️"
             reply_text(
                 event.reply_token,
-                f"🚀🔥 {base_label_pretty()} คุยกันเลย 🔥🚀\n\n"
-                f"ชื่อค่าย :  {camp_name}\n\n"
-                f"ช่างราคา      ⛔️\n\n"
-                f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+                f"🚀🔥 คุยกันเลย 🔥🚀\n\n"
+                f"{_camp_list}\n\n"
+                f"🚀🚀🚀🚀🚀"
             )
         return
 
@@ -13450,12 +13531,24 @@ def handle_message(event):
     _offer_text = _play_text if _matched_camp else text
     offer = parse_offer(_offer_text)
     if offer:
+        # หา round_state ของค่ายที่ match
+        _post_round_state = None
         if _matched_camp:
-            # เลือก STATE ของค่ายที่ตรงกันก่อน create_post
-            _camp_state = select_round_state_for_camp(_matched_camp)
-            if _camp_state:
-                select_round_base(_camp_state.get("base_no", "1"))
-        msg = create_post(event, offer)
+            _post_round_state = select_round_state_for_camp(_matched_camp)
+        else:
+            # ไม่ระบุชื่อค่าย: ถ้ามีค่ายเปิดอยู่แค่ค่ายเดียวให้ใช้ค่ายนั้น
+            # ถ้ามีหลายค่ายเปิดพร้อมกัน ต้องให้ลูกค้าระบุชื่อค่าย
+            _open_states = [
+                st for st in ROUNDS.values()
+                if isinstance(st, dict) and st.get("opened") and st.get("round_id")
+            ]
+            if len(_open_states) == 1:
+                _post_round_state = _open_states[0]
+            elif len(_open_states) > 1:
+                _camp_names = ", ".join(st.get("camp_name", "-") for st in _open_states)
+                reply_problem(event, f"⚠️ มีหลายค่ายเปิดอยู่ กรุณาระบุชื่อค่ายก่อนเล่น\nเช่น: เจริญ ล 500\n\nค่ายที่เปิดอยู่: {_camp_names}")
+                return
+        msg = create_post(event, offer, round_state=_post_round_state)
         if msg:
             reply_problem(event, msg)
         return
