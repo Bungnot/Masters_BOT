@@ -6680,7 +6680,7 @@ def find_camp_in_text(text: str) -> tuple:
         if isinstance(st, dict) and st.get("opened") and st.get("camp_name")
     ]
     if not open_camps:
-        return (None, raw)
+        return (None, raw, None)
 
     alias_pat = "|".join(re.escape(x) for x in ALL_PLAY_ALIASES)
 
