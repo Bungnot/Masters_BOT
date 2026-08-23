@@ -703,10 +703,10 @@ def parse_camp_named_round_command(text: str):
     if m:
         return build(m.group(1), f"เริ่มต้น{m.group(2)}", "two_digit_start", False)
 
-    # ปิด <ชื่อค่าย>
-    m = re.match(r"^ปิด\s+(.+)$", raw)
-    if m:
-        return build(m.group(1), "ปิด", "close", False)
+    # ปิด <ชื่อค่าย> — ให้ fuzzy close handler จัดการเอง ไม่ intercept ที่นี่
+    # m = re.match(r"^ปิด\s+(.+)$", raw)
+    # if m:
+    #     return build(m.group(1), "ปิด", "close", False)
 
     # เล่นต่อ <ชื่อค่าย>
     m = re.match(r"^(เล่นต่อ(?:ครับ|คับ|ค่ะ|คะ)?)\s+(.+)$", raw)
@@ -6699,14 +6699,15 @@ def find_camp_in_text(text: str) -> tuple:
         return bool(re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c))
 
     def _build_tokens(camp_name: str) -> list:
-        """สร้าง token จาก substring ≥2 ตัว ลบวรรณยุกต์ก่อน build
-        เพื่อให้ นุ้น match นุน้ำขัย / โต match โต้เจริญ"""
+        """สร้าง token จาก substring ของชื่อค่าย หลังลบวรรณยุกต์
+        ใช้ minimum 1 ตัว เพราะหลังลบวรรณยุกต์ 'นุ' กลายเป็น 'น' (1 ตัว)
+        เรียงยาวก่อนเพื่อจับคำยาวสุด"""
         tokens = set()
         for word in _camp_words(camp_name):
             stripped = _strip_dia(word)
             n = len(stripped)
             for start in range(n):
-                for end in range(start + 2, n + 1):
+                for end in range(start + 1, n + 1):
                     tok = stripped[start:end]
                     if _THAI_CONSONANT_RE.search(tok):
                         tokens.add(tok)
@@ -6715,43 +6716,85 @@ def find_camp_in_text(text: str) -> tuple:
     # ลบวรรณยุกต์จาก raw text ก่อน match กับ token
     raw_stripped = _strip_dia(raw)
 
+    # รวบ matches ที่เป็นไปได้ทั้งหมด (camp_name, rem, base_no)
+    # ถ้า token เดียวกัน match หลายค่าย → ambiguous → แจ้งให้ระบุชื่อให้ชัดขึ้น
+    all_matches = []  # [(camp_name, rem, base_no)]
+    seen_tokens = {}  # token → [(camp_name, rem, base_no)] เก็บทุก camp ที่ token นี้ match
+
     for camp_name, base_no in open_camps:
         for tok in _build_tokens(camp_name):
             pat = re.escape(tok)
+            matched_rem = None
 
-            # 1) ชื่อค่ายนำหน้า — match กับ raw_stripped แล้วดึง remaining จาก raw จริง
+            # 1) ชื่อค่ายนำหน้า
             m = re.match(rf"^{pat}\s+(.+)$", raw_stripped)
             if m:
-                # หา offset ใน raw จริง
                 prefix_len = len(re.match(rf"^(\S+)\s+", raw_stripped).group(0)) if re.match(rf"^(\S+)\s+", raw_stripped) else 0
                 rem = raw[prefix_len:].strip() if prefix_len else m.group(1).strip()
                 if not rem:
                     rem = m.group(1).strip()
                 if _play_parseable(rem):
-                    return (camp_name, rem, base_no)
+                    matched_rem = rem
 
-            # 2) ชื่อค่ายกลาง + ช่องว่าง + ตัวเลข
-            m = re.match(rf"^(.+?)\s+{pat}\s+(\d[\d,]*.*)$", raw_stripped)
-            if m:
-                rem = (m.group(1) + " " + m.group(2)).strip()
-                if _play_parseable(rem):
-                    return (camp_name, rem, base_no)
+            if matched_rem is None:
+                # 2) ชื่อค่ายกลาง + ช่องว่าง + ตัวเลข
+                m = re.match(rf"^(.+?)\s+{pat}\s+(\d[\d,]*.*)$", raw_stripped)
+                if m:
+                    rem = (m.group(1) + " " + m.group(2)).strip()
+                    if _play_parseable(rem):
+                        matched_rem = rem
 
-            # 3) ชื่อค่ายกลางติดตัวเลข
-            m = re.match(rf"^(.+?)\s+{pat}(\d.*)$", raw_stripped)
-            if m:
-                rem = (m.group(1) + m.group(2)).strip()
-                if _play_parseable(rem):
-                    return (camp_name, rem, base_no)
+            if matched_rem is None:
+                # 3) ชื่อค่ายกลางติดตัวเลข
+                m = re.match(rf"^(.+?)\s+{pat}(\d.*)$", raw_stripped)
+                if m:
+                    rem = (m.group(1) + m.group(2)).strip()
+                    if _play_parseable(rem):
+                        matched_rem = rem
 
-            # 4) ชื่อค่ายตามหลัง
-            m = re.match(rf"^(.+?\d+)\s+{pat}\s*$", raw_stripped)
-            if m:
-                rem = m.group(1).strip()
-                if _play_parseable(rem):
-                    return (camp_name, rem, base_no)
+            if matched_rem is None:
+                # 4) ชื่อค่ายตามหลัง
+                m = re.match(rf"^(.+?\d+)\s+{pat}\s*$", raw_stripped)
+                if m:
+                    rem = m.group(1).strip()
+                    if _play_parseable(rem):
+                        matched_rem = rem
 
-    return (None, raw, None)
+            if matched_rem is not None:
+                entry = (camp_name, matched_rem, base_no)
+                # ถ้ายังไม่เคยเห็น camp นี้ ให้เพิ่ม
+                if not any(e[0] == camp_name for e in all_matches):
+                    all_matches.append(entry)
+                # บันทึก token → camps ที่ match
+                if tok not in seen_tokens:
+                    seen_tokens[tok] = []
+                if camp_name not in seen_tokens[tok]:
+                    seen_tokens[tok].append(camp_name)
+                break  # ได้ match แล้ว ข้ามไป camp ถัดไป
+
+    if not all_matches:
+        return (None, raw, None)
+
+    if len(all_matches) == 1:
+        return all_matches[0]
+
+    # หลายค่าย match — ตรวจว่า keyword ที่พิมไป (token) ทำให้ ambiguous ไหม
+    # ถ้า token ยาวที่สุดที่ match ตรงแค่ค่ายเดียว ให้ใช้ค่ายนั้น
+    # ถ้ายังคลุมเครือ → แจ้ง ambiguous
+    for tok, camps in sorted(seen_tokens.items(), key=lambda x: -len(x[0])):
+        if len(camps) == 1:
+            # token นี้ match ค่ายเดียว → ใช้ได้
+            for entry in all_matches:
+                if entry[0] == camps[0]:
+                    return entry
+
+    # ยังคลุมเครือ — หา keyword จาก raw ที่ผู้ใช้พิม (token ยาวที่สุดที่ match หลายค่าย)
+    _amb_tok = max(seen_tokens.keys(), key=len) if seen_tokens else "?"
+    _amb_camp_list = "\n".join(f"- {c}" for c in dict.fromkeys(
+        c for camps in seen_tokens.values() for c in camps
+    ))
+    # คืน signal พิเศษ ใช้ __ambiguous__ เป็น camp_name
+    return ("__ambiguous__", _amb_camp_list, _amb_tok)
 
 
 def select_round_state_for_camp(camp_name: str, base_no: str = None):
@@ -13326,7 +13369,8 @@ def handle_message(event):
         else:
             # fuzzy match ชื่อค่ายจาก substring (รองรับวรรณยุกต์/ไม้โท/สระ)
             _keyword = _close_cmd
-            THAI_DIACRITICS_RE = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u0E40-\u0E44]")
+            # ลบเฉพาะวรรณยุกต์ (ไม้เอก โท ตรี จัตวา ไม้ไต่คู้ ฯลฯ) ไม่ลบสระ เ แ โ ใ ไ
+            THAI_DIACRITICS_RE = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]")
             THAI_CONSONANT_RE = re.compile(r"[\u0E01-\u0E2E\u0E30\u0E32\u0E33\u0E40-\u0E44]")
 
             def _strip_dia(t):
@@ -13695,6 +13739,15 @@ def handle_message(event):
     # รองรับชื่อค่ายนำหน้าหรือตามหลัง เช่น "เจ ล 500" / "น้องเจ ล 500" / "ชล เจ 500"
     _matched_camp, _play_text, _matched_base_no = find_camp_in_text(text)
     _offer_text = _play_text if _matched_camp else text
+
+    # กรณี ambiguous — keyword match หลายค่าย
+    if _matched_camp == "__ambiguous__":
+        # _play_text คือรายชื่อค่ายที่ match คั่น |
+        _amb_camps = _play_text
+        _amb_keyword = _matched_base_no  # ใช้ _matched_base_no เก็บ keyword ชั่วคราว
+        reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น โด้นำ หรือ นุนำ")
+        return
+
     offer = parse_offer(_offer_text)
 
     # ถ้าจับชื่อค่ายได้แต่ parse ไม่ผ่าน ให้ลอง parse text เดิมทั้งหมดอีกรอบ
