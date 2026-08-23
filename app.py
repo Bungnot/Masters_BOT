@@ -6639,14 +6639,14 @@ def _camp_words(camp_name: str) -> list:
 
 def find_camp_in_text(text: str) -> tuple:
     """
-    หาชื่อค่ายที่ถูก prefix/suffix ในข้อความเล่น
-    รองรับ: ชื่อเต็ม, คำย่อ prefix/suffix ของคำในชื่อ (≥2 ตัว)
-    เช่น ชื่อค่าย "น้องเจเจ" จับได้จาก: เจ ล 500 / น้องเจ ล 500 / ชล เจ 500
+    หาชื่อค่ายในข้อความเล่น รองรับทุกรูปแบบ:
+      หน้า:   "แอ็ด ล 500"  / "เมมเจริญ ชล500"
+      กลาง:   "ชล แอ็ด 500" / "ล นุเจริญ 500"
+      หลัง:   "ชล500 แอ็ด"  / "ล 500 เมม"
 
-    คืน (matched_camp_name, remaining_text) หรือ (None, original_text)
+    คืน (matched_camp_name, remaining_play_text) หรือ (None, original_text)
     """
     raw = (text or "").strip()
-    # รวมชื่อค่ายทั้งหมดที่เปิดอยู่
     open_camps = [
         (st.get("camp_name"), base_no)
         for base_no, st in ROUNDS.items()
@@ -6657,33 +6657,43 @@ def find_camp_in_text(text: str) -> tuple:
 
     for camp_name, base_no in open_camps:
         words = _camp_words(camp_name)
-        if not words:
-            continue
-        # สร้าง token ที่จะใช้จับ: ทุก prefix/suffix ของแต่ละคำ ≥2 ตัว
-        # เรียงยาวก่อนเพื่อจับคำยาวสุดก่อน
+        # สร้าง token: prefix/suffix ของแต่ละคำ ≥2 ตัว เรียงยาวก่อน
         tokens = set()
         for word in words:
-            for length in range(2, len(word) + 1):
-                tokens.add(word[:length])
-                tokens.add(word[len(word) - length:])
+            for l in range(2, len(word) + 1):
+                tokens.add(word[:l])
+                tokens.add(word[len(word) - l:])
         tokens_sorted = sorted(tokens, key=len, reverse=True)
 
         for tok in tokens_sorted:
             if len(tok) < 2:
                 continue
             pat = re.escape(tok)
-            # อยู่หน้า: "น้องเจ ล 500"
+
+            # 1) ชื่อค่ายนำหน้า: "[ชื่อ] [play]"  เช่น "แอ็ด ล 500" / "เมมเจริญ ชล500"
             m = re.match(rf"^{pat}\s+(.+)$", raw)
             if m:
-                return (camp_name, m.group(1).strip())
-            # อยู่หลัง มีช่องว่าง: "ชล น้องเจ 500"
-            m = re.match(rf"^(.+?)\s+{pat}\s+(\d+.*)$", raw)
+                remaining = m.group(1).strip()
+                return (camp_name, remaining)
+
+            # 2) ชื่อค่ายอยู่กลาง: "[play_prefix] [ชื่อ] [number]"  เช่น "ชล แอ็ด 500"
+            m = re.match(rf"^(.+?)\s+{pat}\s+(\d[\d,]*.*)$", raw)
             if m:
-                return (camp_name, (m.group(1) + " " + m.group(2)).strip())
-            # อยู่หลังติดกับตัวเลข: "ชล น้องเจ500"
-            m = re.match(rf"^(.+?)\s+{pat}(\d+.*)$", raw)
+                remaining = (m.group(1) + " " + m.group(2)).strip()
+                return (camp_name, remaining)
+
+            # 3) ชื่อค่ายอยู่กลางติดตัวเลข: "[play_prefix] [ชื่อ][number]"  เช่น "ชล แอ็ด500"
+            m = re.match(rf"^(.+?)\s+{pat}(\d.*)$", raw)
             if m:
-                return (camp_name, (m.group(1) + m.group(2)).strip())
+                remaining = (m.group(1) + m.group(2)).strip()
+                return (camp_name, remaining)
+
+            # 4) ชื่อค่ายตามหลัง: "[play+number] [ชื่อ]"  เช่น "ชล500 แอ็ด" / "ล 500 เมม"
+            m = re.match(rf"^(.+?\d+)\s+{pat}\s*$", raw)
+            if m:
+                remaining = m.group(1).strip()
+                return (camp_name, remaining)
+
     return (None, raw)
 
 
