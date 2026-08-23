@@ -996,7 +996,7 @@ def admin_command_needs_explicit_base(text: str, chat_id: str = None) -> bool:
     if is_continue_round_command(raw):
         return True
     # เปิดรอบใหม่ไม่ต้องระบุฐานแล้ว ระบบจะเลือกฐานว่างให้อัตโนมัติ
-    if parse_open_command(raw):
+    if parse_open_command(raw) is not None:
         return False
     if parse_change_camp_command(raw):
         return True
@@ -6316,8 +6316,26 @@ def push_flex_async(to, alt_text, flex_dict):
 # ======================================================
 
 def parse_open_command(text):
-    m = re.match(r"^เปิด\s+(.+)$", text.strip())
-    return m.group(1).strip() if m else None
+    """
+    รับคำสั่งเปิดรอบ:
+    - เปิด ชื่อค่าย               => (camp_name, None, None)
+    - เปิด ชื่อค่าย 285-305       => (camp_name, 285, 305)
+    คืน (camp_name, base_min, base_max) หรือ None
+    """
+    raw = text.strip()
+    # รูปแบบมีราคากลาง: เปิด <ชื่อค่าย> <min>-<max>
+    m = re.match(r"^เปิด\s+(.+?)\s+(\d+)\s*[-/]\s*(\d+)$", raw)
+    if m:
+        camp_name = m.group(1).strip()
+        a, b = int(m.group(2)), int(m.group(3))
+        if a > b:
+            a, b = b, a
+        return (camp_name, a, b)
+    # รูปแบบไม่มีราคา: เปิด <ชื่อค่าย>
+    m = re.match(r"^เปิด\s+(.+)$", raw)
+    if m:
+        return (m.group(1).strip(), None, None)
+    return None
 
 
 def parse_change_camp_command(text):
@@ -6611,6 +6629,73 @@ def parse_rollback_result_command(text):
         return "confirm"
     if clean in {"ยกเลิกย้อนผล", "ยกเลิกย้อน", "cancelrollback"}:
         return "cancel"
+    return None
+
+
+def _camp_words(camp_name: str) -> list:
+    """แยกคำในชื่อค่ายเป็น list"""
+    return [w for w in re.split(r"\s+", (camp_name or "").strip()) if w]
+
+
+def find_camp_in_text(text: str) -> tuple:
+    """
+    หาชื่อค่ายที่ถูก prefix/suffix ในข้อความเล่น
+    รองรับ: ชื่อเต็ม, คำย่อ prefix/suffix ของคำในชื่อ (≥2 ตัว)
+    เช่น ชื่อค่าย "น้องเจเจ" จับได้จาก: เจ ล 500 / น้องเจ ล 500 / ชล เจ 500
+
+    คืน (matched_camp_name, remaining_text) หรือ (None, original_text)
+    """
+    raw = (text or "").strip()
+    # รวมชื่อค่ายทั้งหมดที่เปิดอยู่
+    open_camps = [
+        (st.get("camp_name"), base_no)
+        for base_no, st in ROUNDS.items()
+        if isinstance(st, dict) and st.get("opened") and st.get("camp_name")
+    ]
+    if not open_camps:
+        return (None, raw)
+
+    for camp_name, base_no in open_camps:
+        words = _camp_words(camp_name)
+        if not words:
+            continue
+        # สร้าง token ที่จะใช้จับ: ทุก prefix/suffix ของแต่ละคำ ≥2 ตัว
+        # เรียงยาวก่อนเพื่อจับคำยาวสุดก่อน
+        tokens = set()
+        for word in words:
+            for length in range(2, len(word) + 1):
+                tokens.add(word[:length])
+                tokens.add(word[len(word) - length:])
+        tokens_sorted = sorted(tokens, key=len, reverse=True)
+
+        for tok in tokens_sorted:
+            if len(tok) < 2:
+                continue
+            pat = re.escape(tok)
+            # อยู่หน้า: "น้องเจ ล 500"
+            m = re.match(rf"^{pat}\s+(.+)$", raw)
+            if m:
+                return (camp_name, m.group(1).strip())
+            # อยู่หลัง มีช่องว่าง: "ชล น้องเจ 500"
+            m = re.match(rf"^(.+?)\s+{pat}\s+(\d+.*)$", raw)
+            if m:
+                return (camp_name, (m.group(1) + " " + m.group(2)).strip())
+            # อยู่หลังติดกับตัวเลข: "ชล น้องเจ500"
+            m = re.match(rf"^(.+?)\s+{pat}(\d+.*)$", raw)
+            if m:
+                return (camp_name, (m.group(1) + m.group(2)).strip())
+    return (None, raw)
+
+
+def select_round_state_for_camp(camp_name: str):
+    """เลือก STATE ที่ตรงกับค่ายที่ระบุ"""
+    if not camp_name:
+        return None
+    for base_no, st in ROUNDS.items():
+        if not isinstance(st, dict):
+            continue
+        if st.get("opened") and normalize_camp_key(st.get("camp_name")) == normalize_camp_key(camp_name):
+            return st
     return None
 
 
@@ -12325,7 +12410,7 @@ def is_round_control_command_text(text: str, user_id: str = None) -> bool:
     if not is_admin(user_id or ""):
         return False
 
-    if parse_open_command(raw):
+    if parse_open_command(raw) is not None:
         return True
     if parse_change_camp_command(raw):
         return True
@@ -12924,8 +13009,15 @@ def handle_message(event):
         return
 
     # เปิดรอบ
-    camp_name = parse_open_command(text)
-    if camp_name:
+    _open_cmd = parse_open_command(text)
+    if _open_cmd is not None:
+        camp_name, open_base_min, open_base_max = _open_cmd
+        if not camp_name:
+            _open_cmd = None  # ชื่อค่ายว่างไม่รับ
+
+    if _open_cmd is not None:
+        camp_name, open_base_min, open_base_max = _open_cmd
+
         if not is_admin(user_id):
             reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
             return
@@ -12945,24 +13037,8 @@ def handle_message(event):
             )
             return
 
-        # ตรวจสอบว่ามีรอบที่ยังไม่ settled อยู่หรือไม่ (ทั้ง opened และ closed)
-        # ห้ามเปิดค่ายใหม่จนกว่าจะแจ้งผลค่ายเดิมให้เสร็จก่อน
-        for _base_no, _st in ROUNDS.items():
-            if not isinstance(_st, dict):
-                continue
-            if not _st.get("round_id") or _st.get("settled"):
-                continue
-            # มีรอบค้างอยู่ (ทั้งที่เปิดอยู่และปิดแล้วรอราคา/รอผล)
-            _camp = _st.get("camp_name") or "-"
-            _status = "เปิดอยู่" if _st.get("opened") else "ปิดแล้ว รอแจ้งผล"
-            reply_text(
-                event.reply_token,
-                f"❌ เปิดรอบไม่ได้\n\n"
-                f"ค่าย \"{_camp}\" ยังค้างอยู่ ({_status})\n\n"
-                f"ต้องแจ้งผลค่าย \"{_camp}\" ให้เสร็จก่อน\n"
-                f"แล้วจึงจะเปิด \"{camp_name}\" ได้"
-            )
-            return
+        # หมายเหตุ: ระบบนี้เปิดหลายค่ายพร้อมกันได้ ไม่บล็อกรอบค้าง
+        # ระบบจะเลือกฐานว่างให้อัตโนมัติ
 
         with STATE_LOCK:
             # เปิดรอบใหม่อัตโนมัติในฐานว่าง ไม่ต้องให้แอดมินพิมพ์ ฐาน1/ฐาน2
@@ -12974,9 +13050,15 @@ def handle_message(event):
             STATE["chat_id"] = get_current_chat_id(event)
             STATE["opened_at_ts"] = time.time()
             STATE["updated_at"] = now_text()
-            STATE["base_min"] = None
-            STATE["base_max"] = None
-            STATE["price_mode"] = None
+            # ถ้ามีราคากลางในคำสั่งเปิด ให้ set ทันที ไม่ต้องรอคำสั่ง ราคาช่าง แยก
+            if open_base_min is not None and open_base_max is not None:
+                STATE["base_min"] = open_base_min
+                STATE["base_max"] = open_base_max
+                STATE["price_mode"] = "normal"
+            else:
+                STATE["base_min"] = None
+                STATE["base_max"] = None
+                STATE["price_mode"] = None
             STATE["no_price_reason"] = None
             STATE["two_digit_start"] = None
             STATE["closed_at"] = None
@@ -12989,13 +13071,22 @@ def handle_message(event):
             clear_pending_price()
             clear_pending_round_clear()
 
-        reply_text(
-            event.reply_token,
-            f"🚀🔥 {base_label_pretty()} คุยกันเลย 🔥🚀\n\n"
-            f"ชื่อค่าย :  {camp_name}\n\n"
-            f"ช่างราคา      ⛔️\n\n"
-            f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
-        )
+        if open_base_min is not None and open_base_max is not None:
+            reply_text(
+                event.reply_token,
+                f"🚀🔥 {base_label_pretty()} คุยกันเลย 🔥🚀\n\n"
+                f"ชื่อค่าย :  {camp_name}\n\n"
+                f"ราคากลาง :  {open_base_min}-{open_base_max}\n\n"
+                f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+            )
+        else:
+            reply_text(
+                event.reply_token,
+                f"🚀🔥 {base_label_pretty()} คุยกันเลย 🔥🚀\n\n"
+                f"ชื่อค่าย :  {camp_name}\n\n"
+                f"ช่างราคา      ⛔️\n\n"
+                f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+            )
         return
 
     # ปิดรอบ
@@ -13281,6 +13372,69 @@ def handle_message(event):
         return
 
     # ======================================================
+    # ยกเลิก ชื่อค่าย — แอดมินยกเลิกทั้งค่าย คืนเครดิตลูกค้าทุกคน
+    # ======================================================
+    _cancel_camp_m = re.match(r"^ยกเลิก\s+(.+)$", text.strip())
+    if _cancel_camp_m:
+        _cancel_camp_name = _cancel_camp_m.group(1).strip()
+        if _cancel_camp_name and not _cancel_camp_name.startswith("ย้อน"):
+            if not is_admin(user_id):
+                reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
+                return
+            with STATE_LOCK:
+                _cancel_state = None
+                _cancel_base = None
+                for _bn, _st in ROUNDS.items():
+                    if not isinstance(_st, dict):
+                        continue
+                    if normalize_camp_key(_st.get("camp_name")) == normalize_camp_key(_cancel_camp_name):
+                        if _st.get("round_id") and not _st.get("settled"):
+                            _cancel_state = _st
+                            _cancel_base = _bn
+                            break
+                if _cancel_state is None:
+                    reply_text(event.reply_token, f"❌ ไม่พบค่ายที่ยังค้างอยู่: {_cancel_camp_name}")
+                    return
+                # คืนเครดิตบิลที่ matched ทั้งหมดของค่ายนี้
+                _round_id = _cancel_state.get("round_id")
+                _refund_count = 0
+                _refund_total = 0
+                for _match in list(MATCHES.values()):
+                    if _match.get("round_id") != _round_id:
+                        continue
+                    if _match.get("status") not in ("matched",):
+                        continue
+                    _amt = _match.get("amount", 0)
+                    _maker = USERS.get(_match.get("maker_id"))
+                    _taker = USERS.get(_match.get("taker_id"))
+                    if _maker:
+                        _maker["credit"] = user_credit_amount(_maker) + _amt
+                    if _taker:
+                        _taker["credit"] = user_credit_amount(_taker) + _amt
+                    _match["status"] = "refunded"
+                    _match["refunded_at"] = now_text()
+                    _refund_count += 1
+                    _refund_total += _amt * 2
+                # ยกเลิก posts ที่ยังเปิดอยู่
+                for _post in list(POSTS.values()):
+                    if _post.get("round_id") == _round_id:
+                        _post["status"] = "cancelled"
+                # mark settled
+                _cancel_state["settled"] = True
+                _cancel_state["opened"] = False
+                _cancel_state["result"] = "cancelled"
+                _cancel_state["updated_at"] = now_text()
+                save_user_db()
+                save_round_backup_db(reason="camp_cancelled")
+            reply_text(
+                event.reply_token,
+                f"✅ ยกเลิกค่าย {_cancel_camp_name} แล้ว\n\n"
+                f"คืนเครดิต {_refund_count} คู่ รวม {_refund_total:,} เครดิต\n"
+                f"เครดิตคืนให้ลูกค้าทุกคนเรียบร้อยแล้ว"
+            )
+            return
+
+    # ======================================================
     # CLEAR ALL — ล้างสกอ / รอบ / Backup ทั้งหมด
     # ======================================================
     if text.strip().upper() == "CLEAR ALL":
@@ -13291,8 +13445,16 @@ def handle_message(event):
         return
 
     # ลูกค้าโพสต์ เช่น ชล500 / ชถ500
-    offer = parse_offer(text)
+    # รองรับชื่อค่ายนำหน้าหรือตามหลัง เช่น "เจ ล 500" / "น้องเจ ล 500" / "ชล เจ 500"
+    _matched_camp, _play_text = find_camp_in_text(text)
+    _offer_text = _play_text if _matched_camp else text
+    offer = parse_offer(_offer_text)
     if offer:
+        if _matched_camp:
+            # เลือก STATE ของค่ายที่ตรงกันก่อน create_post
+            _camp_state = select_round_state_for_camp(_matched_camp)
+            if _camp_state:
+                select_round_base(_camp_state.get("base_no", "1"))
         msg = create_post(event, offer)
         if msg:
             reply_problem(event, msg)
