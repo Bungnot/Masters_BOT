@@ -925,7 +925,20 @@ def select_base_for_incoming_text(event, text: str, explicit_scope=None):
         return selected
 
     # ถ้าเป็นโพสต์แผลใหม่ ให้เข้า base ที่เปิดรับล่าสุด
-    if is_front_chat(event) and parse_offer(text):
+    # รองรับทั้ง ชล500 และ เมม ชล 500 (มีชื่อค่าย)
+    _raw_offer = parse_offer(text)
+    if not _raw_offer:
+        _fc, _ft, _fb = find_camp_in_text(text)
+        if _fc and _fb:
+            _raw_offer = parse_offer(_ft)
+            if _raw_offer:
+                # เลือก base ของค่ายที่ระบุโดยตรง
+                _camp_st = ROUNDS.get(_fb)
+                if _camp_st and _camp_st.get("opened"):
+                    selected = select_round_base(_fb, chat_id=chat_id, create=False)
+                    if selected:
+                        return selected
+    if is_front_chat(event) and _raw_offer:
         selected = select_default_open_base(chat_id)
         if selected:
             return selected
@@ -9395,10 +9408,9 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     if not is_current_round_chat(event):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
-    # รองรับหลายค่าย: ใช้ active round ids (รวมค่ายที่ปิดแล้วแต่ยังไม่ settled)
-    _open_round_ids = _get_open_round_ids()
     _active_round_ids = _get_active_round_ids()
-    # ถ้าไม่มีรอบใดเลย ให้เงียบ
+
+    # ถ้าไม่มีรอบ active เลย ให้เงียบ
     if not _active_round_ids:
         return None
 
@@ -9406,6 +9418,9 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
         if QUIET_GROUP_MODE:
             return None
         return "ต้องตอบกลับข้อความที่ต้องการติดเท่านั้น"
+
+    # คำนวณ _open_round_ids เผื่อใช้ตรวจสอบบางจุด
+    _open_round_ids = _get_open_round_ids()
 
     # B ยืนยันยอดที่ A เสนอแก้กลับมา เช่น
     # A โพสต์ ชล1000 -> B ติด -> A reply ว่า ต100 -> B reply ข้อความ ต100 ว่า ติด
@@ -9513,7 +9528,10 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
             return "ไม่พบโพสต์ต้นทาง หรือโพสต์นี้ไม่ใช่รายการที่ระบบไว้"
 
         if post.get("round_id") not in _active_round_ids:
-            return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
+            # ลองตรวจจาก state โดยตรง เผื่อ _active_round_ids ไม่ครบ
+            post_state = get_state_by_round_id(post.get("round_id"))
+            if not post_state or post_state.get("settled"):
+                return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
 
         # โพสต์ 1 โพสต์ใช้เป็น "ราคาแม่แบบ" ได้เรื่อย ๆ
         # หลังจับคู่สำเร็จแล้ว ห้ามปิดโพสต์อัตโนมัติ เพราะ C/D/E ต้องมาติดโพสต์เดิมต่อได้
