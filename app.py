@@ -12560,6 +12560,10 @@ def is_round_control_command_text(text: str, user_id: str = None) -> bool:
         return True
     if raw == "ปิด" or re.match(r"^ปิด\s+\S", raw):
         return True
+    if re.match(r"^ยกเลิก\s+\S", raw):
+        return True
+    if re.match(r"^เปลี่ยนราคา\s+\S", raw):
+        return True
     if is_continue_round_command(raw):
         return True
     if parse_no_price_command(raw):
@@ -13683,19 +13687,38 @@ def handle_message(event):
                 reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
                 return
             with STATE_LOCK:
-                _cancel_state = None
-                _cancel_base = None
-                for _bn, _st in ROUNDS.items():
-                    if not isinstance(_st, dict):
-                        continue
-                    if normalize_camp_key(_st.get("camp_name")) == normalize_camp_key(_cancel_camp_name):
-                        if _st.get("round_id") and not _st.get("settled"):
-                            _cancel_state = _st
-                            _cancel_base = _bn
-                            break
-                if _cancel_state is None:
+                # fuzzy match + ตัด (N) ออก เหมือนคำสั่ง ปิด
+                _THAI_DIACRITICS_RE2 = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]")
+                def _sd(t): return _THAI_DIACRITICS_RE2.sub("", t or "")
+                def _si(t): return re.sub(r"\s*\(\d+\)\s*$", "", (t or "").strip())
+                def _cm(camp, kw):
+                    cs = _sd(normalize_camp_key(_si(camp)))
+                    ks = _sd(normalize_camp_key(_si(kw)))
+                    return bool(ks) and (cs == ks or ks in cs)
+
+                # หาค่ายที่ match (ยังไม่ settled)
+                _matched = [(bn, st) for bn, st in ROUNDS.items()
+                            if isinstance(st, dict) and st.get("round_id") and not st.get("settled")
+                            and _cm(st.get("camp_name") or "", _cancel_camp_name)]
+
+                if not _matched:
                     reply_text(event.reply_token, f"❌ ไม่พบค่ายที่ยังค้างอยู่: {_cancel_camp_name}")
                     return
+
+                if len(_matched) > 1:
+                    # ถ้า match หลายค่าย ลองหาอันที่ชื่อตรงสุด
+                    _kw_stripped = _si(_cancel_camp_name)
+                    _exact = [(bn, st) for bn, st in _matched
+                              if _si(st.get("camp_name") or "") == _kw_stripped]
+                    if len(_exact) == 1:
+                        _matched = _exact
+                    else:
+                        _clist = "\n".join(f"- {st.get('camp_name','-')}" for _,st in _matched)
+                        reply_text(event.reply_token, f"⚠️ มีหลายค่ายที่ชื่อคล้ายกัน กรุณาระบุชื่อเต็ม:\n{_clist}")
+                        return
+
+                _cancel_base, _cancel_state = _matched[0]
+
                 # คืนเครดิตบิลที่ matched ทั้งหมดของค่ายนี้
                 _round_id = _cancel_state.get("round_id")
                 _refund_count = 0
@@ -13721,6 +13744,7 @@ def handle_message(event):
                     if _post.get("round_id") == _round_id:
                         _post["status"] = "cancelled"
                 # mark settled
+                _real_camp_name = _cancel_state.get("camp_name") or _cancel_camp_name
                 _cancel_state["settled"] = True
                 _cancel_state["opened"] = False
                 _cancel_state["result"] = "cancelled"
@@ -13729,7 +13753,7 @@ def handle_message(event):
                 save_round_backup_db(reason="camp_cancelled")
             reply_text(
                 event.reply_token,
-                f"✅ ยกเลิกค่าย {_cancel_camp_name} แล้ว\n\n"
+                f"✅ ยกเลิกค่าย {_real_camp_name} แล้ว\n\n"
                 f"คืนเครดิต {_refund_count} คู่ รวม {_refund_total:,} เครดิต\n"
                 f"เครดิตคืนให้ลูกค้าทุกคนเรียบร้อยแล้ว"
             )
