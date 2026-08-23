@@ -9379,10 +9379,11 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     if not is_current_round_chat(event):
         return "รายการนี้ต้องเล่นในกลุ่มหน้าบ้านที่เปิดรอบเท่านั้น"
 
-    # รองรับหลายค่าย: ถ้ามีค่ายใดค่ายหนึ่งเปิดอยู่ก็รับ confirm ได้
+    # รองรับหลายค่าย: ใช้ active round ids (รวมค่ายที่ปิดแล้วแต่ยังไม่ settled)
     _open_round_ids = _get_open_round_ids()
     _active_round_ids = _get_active_round_ids()
-    if not _open_round_ids:
+    # ถ้าไม่มีรอบใดเลย ให้เงียบ
+    if not _active_round_ids:
         return None
 
     if not quoted_message_id:
@@ -9495,7 +9496,7 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
                 return None
             return "ไม่พบโพสต์ต้นทาง หรือโพสต์นี้ไม่ใช่รายการที่ระบบไว้"
 
-        if post.get("round_id") not in _open_round_ids:
+        if post.get("round_id") not in _active_round_ids:
             return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
 
         # โพสต์ 1 โพสต์ใช้เป็น "ราคาแม่แบบ" ได้เรื่อย ๆ
