@@ -2543,11 +2543,21 @@ def current_round_chat_id():
 
 
 def is_current_round_chat(event) -> bool:
-    round_chat_id = current_round_chat_id()
-    if not round_chat_id:
-        # รองรับข้อมูลเก่าก่อนอัปเดต ถ้ายังไม่มี chat_id ให้ถือว่ายังไม่ล็อกห้อง
-        return True
-    return round_chat_id == get_current_chat_id(event)
+    current_chat = get_current_chat_id(event)
+    # ตรวจจาก ROUNDS ทั้งหมด ถ้ามีค่ายใดที่ chat_id ตรงกันก็ผ่าน
+    for st in ROUNDS.values():
+        if not isinstance(st, dict):
+            continue
+        if not st.get("round_id"):
+            continue
+        round_chat_id = st.get("chat_id")
+        if not round_chat_id:
+            # ยังไม่ล็อกห้อง ถือว่าผ่าน
+            return True
+        if round_chat_id == current_chat:
+            return True
+    # ไม่มีรอบเลย ถือว่าผ่าน
+    return True
 
 
 def front_room_block_text(action: str = "ใช้คำสั่งนี้") -> str:
@@ -6640,11 +6650,12 @@ def _camp_words(camp_name: str) -> list:
 def find_camp_in_text(text: str) -> tuple:
     """
     หาชื่อค่ายในข้อความเล่น รองรับทุกรูปแบบ:
-      หน้า:   "แอ็ด ล 500"  / "เมมเจริญ ชล500"
+      หน้า:   "แอ็ด ล 500"  / "เมฆเจริญ ชล500"
       กลาง:   "ชล แอ็ด 500" / "ล นุเจริญ 500"
-      หลัง:   "ชล500 แอ็ด"  / "ล 500 เมม"
+      หลัง:   "ชล500 แอ็ด"  / "ล 500 เมฆ"
 
-    คืน (matched_camp_name, remaining_play_text) หรือ (None, original_text)
+    จับชื่อค่ายแบบ substring: prefix, suffix, และ substring ตรงกลาง ≥2 ตัว
+    ตรวจสอบว่า remaining parse เป็น offer ได้ก่อนจะ return เสมอ
     """
     raw = (text or "").strip()
     open_camps = [
@@ -6655,44 +6666,53 @@ def find_camp_in_text(text: str) -> tuple:
     if not open_camps:
         return (None, raw)
 
-    for camp_name, base_no in open_camps:
-        words = _camp_words(camp_name)
-        # สร้าง token: prefix/suffix ของแต่ละคำ ≥2 ตัว เรียงยาวก่อน
-        tokens = set()
-        for word in words:
-            for l in range(2, len(word) + 1):
-                tokens.add(word[:l])
-                tokens.add(word[len(word) - l:])
-        tokens_sorted = sorted(tokens, key=len, reverse=True)
+    alias_pat = "|".join(re.escape(x) for x in ALL_PLAY_ALIASES)
 
-        for tok in tokens_sorted:
-            if len(tok) < 2:
-                continue
+    def _play_parseable(t: str) -> bool:
+        c = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", t or "")
+        return bool(re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c))
+
+    def _build_tokens(camp_name: str) -> list:
+        """สร้าง token ทุก substring ≥2 ตัวของทุกคำในชื่อค่าย เรียงยาวก่อน"""
+        tokens = set()
+        for word in _camp_words(camp_name):
+            n = len(word)
+            for start in range(n):
+                for end in range(start + 2, n + 1):
+                    tokens.add(word[start:end])
+        return sorted(tokens, key=len, reverse=True)
+
+    for camp_name, base_no in open_camps:
+        for tok in _build_tokens(camp_name):
             pat = re.escape(tok)
 
-            # 1) ชื่อค่ายนำหน้า: "[ชื่อ] [play]"  เช่น "แอ็ด ล 500" / "เมมเจริญ ชล500"
+            # 1) ชื่อค่ายนำหน้า
             m = re.match(rf"^{pat}\s+(.+)$", raw)
             if m:
-                remaining = m.group(1).strip()
-                return (camp_name, remaining)
+                rem = m.group(1).strip()
+                if _play_parseable(rem):
+                    return (camp_name, rem)
 
-            # 2) ชื่อค่ายอยู่กลาง: "[play_prefix] [ชื่อ] [number]"  เช่น "ชล แอ็ด 500"
+            # 2) ชื่อค่ายกลาง + ช่องว่าง + ตัวเลข
             m = re.match(rf"^(.+?)\s+{pat}\s+(\d[\d,]*.*)$", raw)
             if m:
-                remaining = (m.group(1) + " " + m.group(2)).strip()
-                return (camp_name, remaining)
+                rem = (m.group(1) + " " + m.group(2)).strip()
+                if _play_parseable(rem):
+                    return (camp_name, rem)
 
-            # 3) ชื่อค่ายอยู่กลางติดตัวเลข: "[play_prefix] [ชื่อ][number]"  เช่น "ชล แอ็ด500"
+            # 3) ชื่อค่ายกลางติดตัวเลข
             m = re.match(rf"^(.+?)\s+{pat}(\d.*)$", raw)
             if m:
-                remaining = (m.group(1) + m.group(2)).strip()
-                return (camp_name, remaining)
+                rem = (m.group(1) + m.group(2)).strip()
+                if _play_parseable(rem):
+                    return (camp_name, rem)
 
-            # 4) ชื่อค่ายตามหลัง: "[play+number] [ชื่อ]"  เช่น "ชล500 แอ็ด" / "ล 500 เมม"
+            # 4) ชื่อค่ายตามหลัง
             m = re.match(rf"^(.+?\d+)\s+{pat}\s*$", raw)
             if m:
-                remaining = m.group(1).strip()
-                return (camp_name, remaining)
+                rem = m.group(1).strip()
+                if _play_parseable(rem):
+                    return (camp_name, rem)
 
     return (None, raw)
 
@@ -13572,11 +13592,27 @@ def handle_message(event):
     _matched_camp, _play_text = find_camp_in_text(text)
     _offer_text = _play_text if _matched_camp else text
     offer = parse_offer(_offer_text)
+
+    # ถ้าจับชื่อค่ายได้แต่ parse ไม่ผ่าน ให้ลอง parse text เดิมทั้งหมดอีกรอบ
+    # (กันเคส find_camp_in_text จับผิดทำให้ play text เสีย)
+    if offer is None and _matched_camp:
+        offer = parse_offer(text)
+        if offer:
+            _matched_camp = None  # reset ค่าย ให้ระบบเลือก state เองตามปกติ
+
     if offer:
         # หา round_state ของค่ายที่ match
         _post_round_state = None
         if _matched_camp:
             _post_round_state = select_round_state_for_camp(_matched_camp)
+            # ถ้าจับชื่อค่ายได้แต่ค้น state ไม่เจอ ให้แจ้งลูกค้า
+            if _post_round_state is None:
+                _open_camp_names = ", ".join(
+                    st.get("camp_name", "-") for st in ROUNDS.values()
+                    if isinstance(st, dict) and st.get("opened") and st.get("round_id")
+                )
+                reply_problem(event, f"⚠️ ไม่พบค่าย \"{_matched_camp}\" ที่เปิดอยู่\nค่ายที่เปิดอยู่: {_open_camp_names}")
+                return
         else:
             # ไม่ระบุชื่อค่าย: ถ้ามีค่ายเปิดอยู่แค่ค่ายเดียวให้ใช้ค่ายนั้น
             # ถ้ามีหลายค่ายเปิดพร้อมกัน ต้องให้ลูกค้าระบุชื่อค่าย
