@@ -1221,8 +1221,11 @@ def _build_single_round_backup(round_id: str, base_no: str = None, state: dict =
         return None
 
     round_id = str(round_id)
-    # Backup เฉพาะ MATCHES (แผลที่จับคู่สำเร็จ) ไม่ backup POSTS
-    round_posts = {}  # ไม่ backup POSTS
+    # Backup ทั้ง POSTS และ MATCHES ของรอบนี้
+    round_posts = {
+        k: v for k, v in (POSTS or {}).items()
+        if isinstance(v, dict) and str(v.get("round_id") or "") == round_id
+    }
     round_matches = {
         k: v for k, v in (MATCHES or {}).items()
         if isinstance(v, dict) and str(v.get("round_id") or "") == round_id
@@ -1532,9 +1535,9 @@ def restore_round_backup_db():
             base_state["base_no"] = base_no
             if not base_state.get("round_id"):
                 base_state["round_id"] = payload.get("round_id")
-            # ใช้ round_id เป็น key เพื่อเก็บรอบทั้งหมด ไม่ใช่ base_no
+            # ใช้ base_no เป็น key ของ ROUNDS เหมือนโค้ดหลัก
             round_id = str(payload.get("round_id") or "")
-            new_rounds[round_id] = base_state
+            new_rounds[base_no] = base_state
 
             if isinstance(payload.get("posts"), dict):
                 new_posts.update(payload.get("posts") or {})
@@ -12596,7 +12599,12 @@ def should_process_text_message(event, text: str) -> bool:
             return True
 
         # โพสต์แผลเล่น เช่น ชล500, ชถ500, 320-350ล500
+        # รองรับชื่อค่ายนำหน้า/กลาง/หลัง เช่น เมม ชล 500, ชล เมม 500
         if parse_offer(raw):
+            return True
+        # ถ้า parse_offer ตรงๆ ไม่ได้ ลองตัดชื่อค่ายออกก่อน
+        _c, _rem, _bn = find_camp_in_text(raw)
+        if _c and parse_offer(_rem):
             return True
 
         # คำว่า ต/ติด ให้บอทสนใจเฉพาะเมื่อ reply ข้อความเท่านั้น
