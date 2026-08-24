@@ -6797,6 +6797,23 @@ def find_camp_in_text(text: str) -> tuple:
     return ("__ambiguous__", _amb_camp_list, _amb_tok)
 
 
+def select_round_state_for_camp(camp_name: str, base_no: str = None):
+    """เลือก STATE ที่ตรงกับค่ายที่ระบุ ถ้ามี base_no ให้ใช้ base_no ก่อน (แม่นยำที่สุด)"""
+    if not camp_name and not base_no:
+        return None
+    if base_no and base_no in ROUNDS:
+        st = ROUNDS[base_no]
+        if isinstance(st, dict) and st.get("opened"):
+            return st
+    if camp_name:
+        for _bn, st in ROUNDS.items():
+            if not isinstance(st, dict):
+                continue
+            if st.get("opened") and normalize_camp_key(st.get("camp_name")) == normalize_camp_key(camp_name):
+                return st
+    return None
+
+
 def find_camp_keyword_only(text: str) -> tuple:
     """
     จับชื่อค่ายจาก text โดยไม่ต้องตรวจว่า remaining เป็น offer ได้หรือเปล่า
