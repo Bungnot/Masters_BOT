@@ -6797,7 +6797,80 @@ def find_camp_in_text(text: str) -> tuple:
     return ("__ambiguous__", _amb_camp_list, _amb_tok)
 
 
-def select_round_state_for_camp(camp_name: str, base_no: str = None):
+def find_camp_keyword_only(text: str) -> tuple:
+    """
+    จับชื่อค่ายจาก text โดยไม่ต้องตรวจว่า remaining เป็น offer ได้หรือเปล่า
+    ใช้สำหรับตรวจ ambiguous ก่อนที่ parse_offer จะทำงาน
+    คืน (camp_name, base_no) ถ้าจับได้ค่ายเดียว
+    คืน ("__ambiguous__", camp_list_str, keyword) ถ้าคลุมเครือ
+    คืน (None, None) ถ้าไม่พบชื่อค่ายในข้อความ
+    """
+    raw = (text or "").strip()
+    open_camps = [
+        (st.get("camp_name"), base_no)
+        for base_no, st in ROUNDS.items()
+        if isinstance(st, dict) and st.get("opened") and st.get("camp_name")
+    ]
+    if not open_camps:
+        return (None, None)
+
+    THAI_CONSONANT_RE = re.compile(r"[\u0E01-\u0E2E\u0E30\u0E32\u0E33\u0E40-\u0E44]")
+    THAI_DIACRITICS_RE = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]")
+
+    def _sd(t): return THAI_DIACRITICS_RE.sub("", t or "")
+
+    raw_stripped = _sd(raw)
+    raw_words = re.split(r"\s+", raw_stripped)
+
+    # สร้าง token map: token → [camp_names]
+    token_to_camps = {}
+    camp_tokens = {}
+
+    for camp_name, base_no in open_camps:
+        tokens = set()
+        for word in _camp_words(camp_name):
+            s = _sd(word)
+            n = len(s)
+            for i in range(n):
+                for j in range(i + 1, n + 1):
+                    tok = s[i:j]
+                    if THAI_CONSONANT_RE.search(tok):
+                        tokens.add(tok)
+        camp_tokens[(camp_name, base_no)] = tokens
+        for tok in tokens:
+            if tok not in token_to_camps:
+                token_to_camps[tok] = []
+            if camp_name not in token_to_camps[tok]:
+                token_to_camps[tok].append(camp_name)
+
+    # ตรวจว่า word ใดใน raw match กับ token ของค่ายไหนบ้าง
+    matched_camps = set()  # camp_name ที่ match
+    matched_tok = None
+
+    for word in raw_words:
+        if len(word) < 1:
+            continue
+        # หา camp ที่มี token == word นี้
+        hit_camps = [c for c in open_camps if word in camp_tokens.get(c, set())]
+        if hit_camps:
+            for c, bn in hit_camps:
+                matched_camps.add((c, bn))
+            if matched_tok is None or len(word) > len(matched_tok):
+                matched_tok = word
+
+    if not matched_camps:
+        return (None, None)
+
+    if len(matched_camps) == 1:
+        camp_name, base_no = next(iter(matched_camps))
+        return (camp_name, base_no)
+
+    # หลายค่าย — ambiguous
+    camp_list = "\n".join(f"- {c}" for c, _ in matched_camps)
+    return ("__ambiguous__", camp_list, matched_tok or "?")
+
+
+
     """เลือก STATE ที่ตรงกับค่ายที่ระบุ ถ้ามี base_no ให้ใช้ base_no ก่อน"""
     if not camp_name and not base_no:
         return None
@@ -13774,15 +13847,23 @@ def handle_message(event):
     _matched_camp, _play_text, _matched_base_no = find_camp_in_text(text)
     _offer_text = _play_text if _matched_camp else text
 
-    # กรณี ambiguous — keyword match หลายค่าย
+    # กรณี ambiguous — keyword match หลายค่าย (find_camp_in_text เจอ remaining parse ได้)
     if _matched_camp == "__ambiguous__":
-        # _play_text คือรายชื่อค่ายที่ match คั่น |
         _amb_camps = _play_text
-        _amb_keyword = _matched_base_no  # ใช้ _matched_base_no เก็บ keyword ชั่วคราว
+        _amb_keyword = _matched_base_no
         reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น โด้นำ หรือ นุนำ")
         return
 
     offer = parse_offer(_offer_text)
+
+    # ถ้ายังไม่เจอ offer ให้ตรวจ ambiguous จากชื่อค่ายล้วนๆ ก่อน
+    # กรณี เช่น "ขัย กอย 500" — ขัย match หลายค่าย แต่ กอย ไม่ใช่ alias
+    if offer is None and _matched_camp is None:
+        _kw_result = find_camp_keyword_only(text)
+        if _kw_result and len(_kw_result) == 3 and _kw_result[0] == "__ambiguous__":
+            _, _amb_camps, _amb_keyword = _kw_result
+            reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น โด้นำ หรือ นุนำ")
+            return
 
     # ถ้าจับชื่อค่ายได้แต่ parse ไม่ผ่าน ให้ลอง parse text เดิมทั้งหมดอีกรอบ
     # (กันเคส find_camp_in_text จับผิดทำให้ play text เสีย)
