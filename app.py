@@ -748,9 +748,14 @@ def is_camp_scoped_round_command(text: str) -> bool:
 
 
 def _camp_candidates_for_command(camp_name: str, chat_id: str = None, want_settled: bool = None):
-    """หา state จากชื่อค่ายแบบต้องตรงชื่อค่าย"""
+    """หา state จากชื่อค่าย รองรับ fuzzy match + ตัด (N) + ลบวรรณยุกต์"""
+    THAI_DIACRITICS_RE = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]")
+    def _sd(t): return THAI_DIACRITICS_RE.sub("", t or "")
+    def _si(t): return re.sub(r"\s*\(\d+\)\s*$", "", (t or "").strip())
+    def _norm(t): return _sd(normalize_camp_key(_si(t)))
+
+    kw = _norm(camp_name)
     rows = []
-    key = normalize_camp_key(camp_name)
     for base_no, st in sorted(ROUNDS.items(), key=lambda x: str(x[0])):
         if not isinstance(st, dict):
             continue
@@ -758,7 +763,9 @@ def _camp_candidates_for_command(camp_name: str, chat_id: str = None, want_settl
             continue
         if not st.get("round_id"):
             continue
-        if normalize_camp_key(st.get("camp_name")) != key:
+        # fuzzy match: keyword เป็น substring ของชื่อค่าย (หลัง strip dia + index)
+        cs = _norm(st.get("camp_name"))
+        if not (cs == kw or kw in cs):
             continue
         if want_settled is True and not st.get("settled"):
             continue
@@ -12774,7 +12781,13 @@ def should_process_text_message(event, text: str) -> bool:
             return True
         # ถ้า parse_offer ตรงๆ ไม่ได้ ลองตัดชื่อค่ายออกก่อน
         _c, _rem, _bn = find_camp_in_text(raw)
+        if _c == "__ambiguous__":
+            return True  # ambiguous — ให้ผ่านเพื่อแจ้งลูกค้า
         if _c and parse_offer(_rem):
+            return True
+        # ตรวจ ambiguous จากชื่อค่ายล้วนๆ (กรณี alias ไม่ถูก)
+        _kw_r = find_camp_keyword_only(raw)
+        if _kw_r and len(_kw_r) >= 1 and _kw_r[0] == "__ambiguous__":
             return True
 
         # คำว่า ต/ติด ให้บอทสนใจเฉพาะเมื่อ reply ข้อความเท่านั้น
