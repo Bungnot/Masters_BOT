@@ -9688,6 +9688,12 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
             if not post_state or post_state.get("settled"):
                 return "โพสต์นี้ไม่ใช่รอบปัจจุบัน"
 
+        # ถ้าค่ายปิดรอบแล้ว (opened=False) ไม่รับ taker ใหม่
+        _post_round_state = get_state_by_round_id(post.get("round_id"))
+        if _post_round_state and not _post_round_state.get("opened"):
+            _closed_camp_name = _post_round_state.get("camp_name") or "ค่ายนี้"
+            return f"❌ {_closed_camp_name} ปิดรอบแล้ว ไม่รับรายการใหม่ค่ะ"
+
         # โพสต์ 1 โพสต์ใช้เป็น "ราคาแม่แบบ" ได้เรื่อย ๆ
         # หลังจับคู่สำเร็จแล้ว ห้ามปิดโพสต์อัตโนมัติ เพราะ C/D/E ต้องมาติดโพสต์เดิมต่อได้
         post_status = post.get("status", "open")
