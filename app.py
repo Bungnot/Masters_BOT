@@ -7820,7 +7820,7 @@ def camp_cancel_notify_flex(match, camp_name: str, refund_amount: int):
                 },
                 {
                     "type": "text",
-                    "text": f"คืนเครดิต {refund_amount:,} บาท",
+                    "text": f"คืนเครดิต {refund_amount:,} บาท (ยอดของคุณ)",
                     "align": "center",
                     "weight": "bold",
                     "size": "xl",
@@ -13998,17 +13998,28 @@ def handle_message(event):
                 save_user_db()
                 save_round_backup_db(reason="camp_cancelled")
             # Push FLEX แจ้งยกเลิก+คืนเครดิต ไปยัง DM ของแต่ละคนในบิล
-            def _push_cancel_notifications():
+            # capture ค่าตอนนี้เลย กัน late-binding closure bug
+            _notify_round_id = str(_round_id)
+            _notify_camp_name = str(_real_camp_name)
+
+            def _push_cancel_notifications(round_id=_notify_round_id, camp_name=_notify_camp_name):
                 for _match in list(MATCHES.values()):
-                    if _match.get("round_id") != _round_id:
+                    if _match.get("round_id") != round_id:
                         continue
                     if _match.get("status") != "refunded":
                         continue
-                    _amt = _match.get("amount", 0)
-                    _flex = camp_cancel_notify_flex(_match, _real_camp_name, _amt)
+                    _amt = int(_match.get("amount", 0) or 0)
                     for _uid in [_match.get("maker_id"), _match.get("taker_id")]:
-                        if _uid:
-                            push_flex(_uid, f"ยกเลิกค่าย {_real_camp_name}", _flex)
+                        if not _uid:
+                            continue
+                        try:
+                            _flex = camp_cancel_notify_flex(_match, camp_name, _amt)
+                            push_flex(_uid, f"ยกเลิกค่าย {camp_name}", _flex)
+                        except Exception as _e:
+                            try:
+                                push_text(_uid, f"❌ ยกเลิกค่าย {camp_name} แล้ว คืนเครดิต {_amt:,} บาท")
+                            except Exception:
+                                pass
             EXECUTOR.submit(_push_cancel_notifications)
 
             reply_text(
