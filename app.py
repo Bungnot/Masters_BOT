@@ -13537,47 +13537,40 @@ def handle_message(event):
             clear_pending_price()
             clear_pending_round_clear()
 
-        if open_base_min is not None and open_base_max is not None:
-            # สร้างรายการค่ายทั้งหมดที่เปิดอยู่ (รวมค่ายที่เพิ่งเปิด)
-            _all_open_lines = []
-            for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
-                if not isinstance(_st, dict):
-                    continue
-                if _st.get("opened") and _st.get("round_id"):
-                    _c = _st.get("camp_name") or "-"
-                    _mn = _st.get("base_min")
-                    _mx = _st.get("base_max")
-                    if _mn is not None and _mx is not None:
-                        _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
-                    else:
-                        _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
-            _camp_list = "\n\n".join(_all_open_lines) if _all_open_lines else f"{camp_name}\nช่าง  {open_base_min}-{open_base_max}"
-            reply_text(
-                event.reply_token,
-                f"🚀🔥 คุยกันเลย 🔥🚀\n\n"
-                f"{_camp_list}\n\n"
-                f"🚀🚀🚀🚀🚀"
-            )
-        else:
-            _all_open_lines = []
-            for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
-                if not isinstance(_st, dict):
-                    continue
-                if _st.get("opened") and _st.get("round_id"):
-                    _c = _st.get("camp_name") or "-"
-                    _mn = _st.get("base_min")
-                    _mx = _st.get("base_max")
-                    if _mn is not None and _mx is not None:
-                        _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
-                    else:
-                        _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
-            _camp_list = "\n\n".join(_all_open_lines) if _all_open_lines else f"{camp_name}\nช่าง  ⛔️"
-            reply_text(
-                event.reply_token,
-                f"🚀🔥 คุยกันเลย 🔥🚀\n\n"
-                f"{_camp_list}\n\n"
-                f"🚀🚀🚀🚀🚀"
-            )
+        # สร้างรายการค่ายทั้งหมดที่เปิดอยู่ ณ ตอนนี้ (หลัง STATE update แล้ว)
+        def _sort_base_no(item):
+            try:
+                return int(str(item[0]))
+            except Exception:
+                return 999
+
+        _all_open_lines = []
+        for _bn, _st in sorted(ROUNDS.items(), key=_sort_base_no):
+            if not isinstance(_st, dict):
+                continue
+            if _st.get("opened") and _st.get("round_id") and not _st.get("settled"):
+                _c = _st.get("camp_name") or "-"
+                _mn = _st.get("base_min")
+                _mx = _st.get("base_max")
+                if _mn is not None and _mx is not None:
+                    _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
+                else:
+                    _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
+
+        if not _all_open_lines:
+            # fallback กรณี ROUNDS ยังไม่ sync (ไม่ควรเกิด)
+            if open_base_min is not None and open_base_max is not None:
+                _all_open_lines.append(f"{camp_name}\nช่าง  {open_base_min}-{open_base_max}")
+            else:
+                _all_open_lines.append(f"{camp_name}\nช่าง  ⛔️")
+
+        _camp_list = "\n\n".join(_all_open_lines)
+        reply_text(
+            event.reply_token,
+            f"🚀🔥 คุยกันเลย 🔥🚀\n\n"
+            f"{_camp_list}\n\n"
+            f"🚀🚀🚀🚀🚀"
+        )
         return
 
     # ปิดรอบ — รองรับ "ปิด" (ปิดค่ายที่เปิดอยู่) และ "ปิด ชื่อค่าย" (fuzzy match)
