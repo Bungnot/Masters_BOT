@@ -7773,6 +7773,113 @@ def cancel_success_flex(match):
     }
 
 
+def camp_cancel_notify_flex(match, camp_name: str, refund_amount: int):
+    """FLEX แจ้งยกเลิกค่าย + คืนเครดิต ส่งไปยัง DM ของแต่ละคนในบิล"""
+    play_text = format_match_play_text(match)
+    price_label = "ราคาเล่น" if match.get("is_custom_price") else "ราคาช่าง"
+    price_text = format_match_price_text_for_flex(match)
+    order_no = match.get("order_no", "-")
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#EF4444",
+            "paddingAll": "16px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "✕  ยกเลิกค่าย",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                },
+                {
+                    "type": "text",
+                    "text": camp_name,
+                    "size": "sm",
+                    "color": "#FFCCCC",
+                    "margin": "xs",
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "18px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"Order #{order_no}",
+                    "align": "center",
+                    "color": "#999999",
+                    "size": "sm",
+                },
+                {
+                    "type": "text",
+                    "text": f"คืนเครดิต {refund_amount:,} บาท",
+                    "align": "center",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#EF4444",
+                },
+                {
+                    "type": "separator",
+                    "margin": "md",
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "sm",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "ค่าย", "size": "sm", "color": "#999999", "flex": 2},
+                                {"type": "text", "text": camp_name, "size": "sm", "color": "#111111", "flex": 3, "align": "end"},
+                            ],
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "รายการ", "size": "sm", "color": "#999999", "flex": 2},
+                                {"type": "text", "text": play_text or "-", "size": "sm", "color": "#111111", "flex": 3, "align": "end", "wrap": True},
+                            ],
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": price_label, "size": "sm", "color": "#999999", "flex": 2},
+                                {"type": "text", "text": price_text or "-", "size": "sm", "color": "#111111", "flex": 3, "align": "end"},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "type": "separator",
+                    "margin": "md",
+                },
+                {
+                    "type": "text",
+                    "text": "แอดมินยกเลิกค่ายนี้\nเครดิตถูกคืนให้คุณเรียบร้อยแล้ว",
+                    "size": "sm",
+                    "color": "#666666",
+                    "wrap": True,
+                    "align": "center",
+                    "margin": "md",
+                },
+            ],
+        },
+    }
+
+
 def cancel_reject_flex(match, rejecter_id):
     rejecter = USERS.get(rejecter_id, {})
     amount = match.get("amount", 0)
@@ -10965,19 +11072,21 @@ def format_listplay_play_text(match: dict) -> str:
 
 def current_round_listplay_report(limit: int = 80) -> str:
     """
-    รายงานแบบสั้นตามที่ต้องการ:
+    รายงานแบบสั้นทุกค่ายที่ยังไม่ settled:
     นาย A เล่น 320-350ล500 กับ นาย B
-    นาย A เล่น 3-7ล500 กับ นาย B
     """
-    if STATE.get("round_id") is None:
+    # รวบรวมทุก round_state ที่ยังไม่ settled (ทั้งเปิดและปิดรอผล)
+    active_states = [
+        (base_no, st)
+        for base_no, st in ROUNDS.items()
+        if isinstance(st, dict) and st.get("round_id") and not st.get("settled")
+    ]
+
+    if not active_states:
         return "ยังไม่มีรอบปัจจุบัน"
 
-    current_round_id = STATE.get("round_id")
-    rows = [
-        m for m in MATCHES.values()
-        if m.get("round_id") == current_round_id
-        and m.get("status") == "matched"
-    ]
+    # เรียงตาม opened_at_ts
+    active_states.sort(key=lambda x: float(x[1].get("opened_at_ts") or 0))
 
     def sort_key(match):
         try:
@@ -10985,35 +11094,51 @@ def current_round_listplay_report(limit: int = 80) -> str:
         except Exception:
             return 0
 
-    rows = sorted(rows, key=sort_key)
+    all_lines = []
+    total_pairs = 0
 
-    if not rows:
-        return (
-            f"listplay | ค่าย: {STATE.get('camp_name') or '-'}\n\n"
-            "ยังไม่มีรายการที่จับคู่สำเร็จและรอผลในรอบนี้"
-        )
+    for base_no, st in active_states:
+        round_id = st.get("round_id")
+        camp_name = st.get("camp_name") or f"ฐาน{base_no}"
+        status_label = "เปิดรับอยู่" if st.get("opened") else "ปิดแล้ว/รอผล"
 
-    lines = [
-        f"listplay | ค่าย: {STATE.get('camp_name') or '-'}",
-        f"จำนวนคู่รอผล: {len(rows):,}",
+        rows = [
+            m for m in MATCHES.values()
+            if m.get("round_id") == round_id
+            and m.get("status") == "matched"
+        ]
+        rows = sorted(rows, key=sort_key)
+        total_pairs += len(rows)
+
+        all_lines.append(f"▶ ค่าย: {camp_name} [{status_label}] | คู่รอผล: {len(rows):,}")
+
+        if not rows:
+            all_lines.append("  ยังไม่มีรายการที่จับคู่สำเร็จ")
+        else:
+            count = 0
+            for m in rows:
+                if count >= limit:
+                    all_lines.append(f"  ...อีก {len(rows) - limit:,} คู่")
+                    break
+                maker_name = _listplay_display_name(m.get("maker_name") or user_display_name(m.get("maker_id")))
+                taker_name = _listplay_display_name(m.get("taker_name") or user_display_name(m.get("taker_id")))
+                play_text = format_listplay_play_text(m)
+                price_note = ""
+                if m.get("is_custom_price") or m.get("is_two_digit_price"):
+                    custom_price_text = format_match_price_text_for_active_list(m)
+                    if custom_price_text and custom_price_text != "-":
+                        price_note = f" | ราคาเล่น {custom_price_text}"
+                all_lines.append(f"  นาย {maker_name} เล่น {play_text} กับ นาย {taker_name}{price_note}")
+                count += 1
+
+        all_lines.append("")
+
+    header = [
+        f"listplay | ทุกค่ายที่เปิด ({len(active_states)} ค่าย) | รวม {total_pairs:,} คู่",
         "",
     ]
 
-    for m in rows[:limit]:
-        maker_name = _listplay_display_name(m.get("maker_name") or user_display_name(m.get("maker_id")))
-        taker_name = _listplay_display_name(m.get("taker_name") or user_display_name(m.get("taker_id")))
-        play_text = format_listplay_play_text(m)
-        price_note = ""
-        if m.get("is_custom_price") or m.get("is_two_digit_price"):
-            custom_price_text = format_match_price_text_for_active_list(m)
-            if custom_price_text and custom_price_text != "-":
-                price_note = f" | ราคาเล่น {custom_price_text}"
-        lines.append(f"นาย {maker_name} เล่น {play_text} กับ นาย {taker_name}{price_note}")
-
-    if len(rows) > limit:
-        lines.append(f"...อีก {len(rows) - limit:,} คู่")
-
-    return "\n".join(lines).strip()
+    return "\n".join(header + all_lines).strip()
 
 
 def users_report():
@@ -13872,11 +13997,25 @@ def handle_message(event):
                 _cancel_state["updated_at"] = now_text()
                 save_user_db()
                 save_round_backup_db(reason="camp_cancelled")
+            # Push FLEX แจ้งยกเลิก+คืนเครดิต ไปยัง DM ของแต่ละคนในบิล
+            def _push_cancel_notifications():
+                for _match in list(MATCHES.values()):
+                    if _match.get("round_id") != _round_id:
+                        continue
+                    if _match.get("status") != "refunded":
+                        continue
+                    _amt = _match.get("amount", 0)
+                    _flex = camp_cancel_notify_flex(_match, _real_camp_name, _amt)
+                    for _uid in [_match.get("maker_id"), _match.get("taker_id")]:
+                        if _uid:
+                            push_flex(_uid, f"ยกเลิกค่าย {_real_camp_name}", _flex)
+            EXECUTOR.submit(_push_cancel_notifications)
+
             reply_text(
                 event.reply_token,
                 f"✅ ยกเลิกค่าย {_real_camp_name} แล้ว\n\n"
                 f"คืนเครดิต {_refund_count} คู่ รวม {_refund_total:,} เครดิต\n"
-                f"เครดิตคืนให้ลูกค้าทุกคนเรียบร้อยแล้ว"
+                f"แจ้งลูกค้าทุกคนทาง DM เรียบร้อยแล้ว"
             )
             return
 
