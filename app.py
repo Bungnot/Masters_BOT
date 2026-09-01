@@ -9584,6 +9584,12 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
         if counter_post.get("round_id") not in _active_round_ids:
             return "รายการนี้ไม่ใช่รอบปัจจุบัน"
 
+        # ถ้าค่ายปิดรอบแล้ว ไม่อนุญาตให้ยืนยัน counter pending
+        _counter_round_state = get_state_by_round_id(counter_post.get("round_id"))
+        if _counter_round_state and not _counter_round_state.get("opened"):
+            _camp = _counter_round_state.get("camp_name") or "ค่ายนี้"
+            return f"❌ {_camp} ปิดรอบแล้ว ไม่สามารถยืนยันรายการได้ค่ะ"
+
         if user_id != counter_taker.get("taker_id"):
             return "รายการนี้รอคนที่มาติดยืนยันยอดที่เจ้าของโพสต์เสนอ"
 
@@ -9629,6 +9635,12 @@ def handle_confirm(event, quoted_message_id, requested_amount=None):
     if pending_post and pending_taker:
         if pending_post.get("round_id") not in _active_round_ids:
             return "รายการนี้ไม่ใช่รอบปัจจุบัน"
+
+        # ถ้าค่ายปิดรอบแล้ว ไม่อนุญาตให้ A ยืนยัน pending
+        _pending_round_state = get_state_by_round_id(pending_post.get("round_id"))
+        if _pending_round_state and not _pending_round_state.get("opened"):
+            _camp = _pending_round_state.get("camp_name") or "ค่ายนี้"
+            return f"❌ {_camp} ปิดรอบแล้ว ไม่สามารถยืนยันรายการได้ค่ะ"
 
         if user_id != pending_post["maker_id"]:
             return "ตอบผิดกรุณาเช็คก่อนติด เพื่อผลประโยชน์ของคุณพี่นะคะ"
