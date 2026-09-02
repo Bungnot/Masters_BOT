@@ -12869,6 +12869,8 @@ def is_round_control_command_text(text: str, user_id: str = None) -> bool:
         return True
     if re.match(r"^เปลี่ยนราคา\s+\S", raw):
         return True
+    if re.match(r"^ช่าง\s+.+?\s+\d{3}", raw):
+        return True
     if is_continue_round_command(raw):
         return True
     if parse_no_price_command(raw):
@@ -12976,6 +12978,7 @@ def should_process_text_message(event, text: str) -> bool:
             or is_bank_account_request(raw)
             or is_withdrawal_command(raw)
             or is_scoreboard_command(raw)
+            or raw.replace(" ", "") in {"รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}
         ):
             return True
 
