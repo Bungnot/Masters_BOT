@@ -10354,7 +10354,7 @@ def settle_round(result_value: int):
     clear_pending_round_clear()
 
     if not target_matches:
-        return f"แจ้งผล {result_value} แล้ว แต่ไม่มีรายการที่จับคู่สำเร็จในรอบนี้"
+        return public_result_reply_payload(result_value)
 
     user_rows = {}
     user_net = {}
@@ -10544,7 +10544,7 @@ def settle_round_all_jow(reason: str):
     clear_pending_round_clear()
 
     if not target_matches:
-        return f"แจ้งผล {reason} แล้ว แต่ไม่มีรายการที่จับคู่สำเร็จในรอบนี้"
+        return public_result_reply_payload(reason)
 
     user_rows = {}
     user_net = {}
