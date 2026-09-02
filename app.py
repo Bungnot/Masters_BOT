@@ -13466,7 +13466,7 @@ def handle_message(event):
                 _mn = _st.get("base_min")
                 _mx = _st.get("base_max")
                 if _mn is not None and _mx is not None:
-                    _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
+                    _all_open_lines.append(f"{_c}\nช่าง  {format_price_range_text(_mn, _mx)}")
                 else:
                     _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
         _camp_list = "\n\n".join(_all_open_lines) if _all_open_lines else f"{_cp_camp}\nช่าง  {_cp_a}-{_cp_b}"
@@ -13572,7 +13572,7 @@ def handle_message(event):
                 _mn = _st.get("base_min")
                 _mx = _st.get("base_max")
                 if _mn is not None and _mx is not None:
-                    _all_open_lines.append(f"{_c}\nช่าง  {_mn}-{_mx}")
+                    _all_open_lines.append(f"{_c}\nช่าง  {format_price_range_text(_mn, _mx)}")
                 else:
                     _all_open_lines.append(f"{_c}\nช่าง  ⛔️")
 
