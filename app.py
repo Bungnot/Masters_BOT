@@ -3709,6 +3709,9 @@ def archive_settled_round_to_history(st: dict):
         return
     if round_id in SCOREBOARD_HISTORY:
         return  # มีแล้ว ไม่ต้องบันทึกซ้ำ
+    # ค่ายที่ถูกยกเลิก (result=None) ไม่ควรแสดงในสกอ
+    if st.get("result") is None:
+        return
     SCOREBOARD_HISTORY[round_id] = {
         "round_id": round_id,
         "base_no": st.get("base_no") or "1",
@@ -3721,6 +3724,7 @@ def archive_settled_round_to_history(st: dict):
         "two_digit_start": st.get("two_digit_start"),
         "settled": True,
         "opened_at_ts": st.get("opened_at_ts") or 0,
+        "settled_at_ts": st.get("settled_at_ts") or time.time(),
         "updated_at": st.get("updated_at"),
     }
 
@@ -3739,12 +3743,12 @@ def scoreboard_rows_for_chat(chat_id: str = None):
             return None
         status = scoreboard_status_from_round(st)
         try:
-            opened_sort = float(st.get("opened_at_ts") or 0)
+            settled_sort = float(st.get("settled_at_ts") or st.get("opened_at_ts") or 0)
         except Exception:
-            opened_sort = 0
+            settled_sort = 0
         base_no = normalize_base_no(st.get("base_no") or "1")
         return {
-            "sort": (opened_sort, base_no),
+            "sort": (settled_sort, base_no),
             "base_no": base_no,
             "camp_name": st.get("camp_name") or "-",
             "price_text": state_public_price_text_no_start(st),
@@ -3770,12 +3774,13 @@ def scoreboard_rows_for_chat(chat_id: str = None):
             seen.add(round_id)
             rows.append(row)
 
+    # เรียงจากเก่าไปใหม่ → ค่ายล่าสุดแจ้งผลจะอยู่ท้ายสุด
     rows.sort(key=lambda x: x.get("sort") or (0, ""))
     return rows
 
 
 def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
-    """Flex สรุปสกอค่าย: ชื่อค่าย / ราคาช่าง / ผล+emoji พร้อมนับ ชนะ แพ้ จาว อัตโนมัติ"""
+    """Flex สรุปสกอค่าย: carousel 3 bubble เลื่อนซ้าย-ขวาได้ ค่ายล่าสุดอยู่ท้ายสุด"""
     rows = scoreboard_rows_for_chat(chat_id)
     if not rows:
         return None
@@ -3785,8 +3790,8 @@ def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
     jow_count = sum(1 for r in rows if r.get("status_word") == "จาว")
     today_text = datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y")
 
-    table_contents = [
-        {
+    def _header_row():
+        return {
             "type": "box",
             "layout": "horizontal",
             "backgroundColor": "#F3F4F6",
@@ -3798,79 +3803,91 @@ def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
                 {"type": "text", "text": "ผล", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 3},
             ],
         }
-    ]
 
-    for idx, row in enumerate(rows[:limit], start=1):
-        table_contents.extend([
-            {
-                "type": "box",
-                "layout": "horizontal",
-                "paddingTop": "7px",
-                "paddingBottom": "7px",
-                "contents": [
-                    {"type": "text", "text": f"{idx}.", "size": "xs", "weight": "bold", "color": "#334155", "flex": 1},
-                    {"type": "text", "text": row.get("camp_name") or "-", "size": "xs", "weight": "bold", "wrap": True, "color": "#0F172A", "flex": 5},
-                    {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "weight": "bold", "align": "end", "color": "#0F172A", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
-                    {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons')}", "size": "xs", "weight": "bold", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
-                ],
-            },
-            {"type": "separator", "color": "#E5E7EB"},
-        ])
-
-    if len(rows) > limit:
-        table_contents.append({
-            "type": "text",
-            "text": f"มีรายการเพิ่มเติมอีก {len(rows) - limit:,} ค่าย",
-            "size": "xs",
-            "color": "#64748B",
-            "wrap": True,
-            "margin": "md",
-        })
-
-    return {
-        "type": "bubble",
-        "size": "giga",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "paddingAll": "10px",
-            "backgroundColor": "#FFFFFF",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "📋 ผลบั้งไฟ 📋",
-                    "size": "lg",
-                    "weight": "bold",
-                    "align": "center",
-                    "color": "#0F172A",
-                },
-                {
-                    "type": "text",
-                    "text": f"🗓️ วันที่ {today_text}",
-                    "size": "xs",
-                    "align": "center",
-                    "color": "#64748B",
-                    "margin": "xs",
-                },
-                {
-                    "type": "text",
-                    "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}",
-                    "size": "sm",
-                    "weight": "bold",
-                    "align": "center",
-                    "color": "#111827",
-                    "margin": "md",
-                    "wrap": True,
-                },
+    def _data_rows(page_rows, start_idx):
+        items = []
+        for idx, row in enumerate(page_rows, start=start_idx):
+            items.extend([
                 {
                     "type": "box",
-                    "layout": "vertical",
-                    "margin": "md",
-                    "contents": table_contents,
+                    "layout": "horizontal",
+                    "paddingTop": "7px",
+                    "paddingBottom": "7px",
+                    "contents": [
+                        {"type": "text", "text": f"{idx}.", "size": "xs", "weight": "bold", "color": "#334155", "flex": 1},
+                        {"type": "text", "text": row.get("camp_name") or "-", "size": "xs", "weight": "bold", "wrap": True, "color": "#0F172A", "flex": 5},
+                        {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "weight": "bold", "align": "end", "color": "#0F172A", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                        {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons')}", "size": "xs", "weight": "bold", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                    ],
                 },
-            ],
-        },
-    }
+                {"type": "separator", "color": "#E5E7EB"},
+            ])
+        return items
+
+    def _make_bubble(page_rows, start_idx, page_no, total_pages, total_rows):
+        table_contents = [_header_row()] + _data_rows(page_rows, start_idx)
+        return {
+            "type": "bubble",
+            "size": "giga",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "10px",
+                "backgroundColor": "#FFFFFF",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "📋 ผลบั้งไฟ 📋",
+                        "size": "lg",
+                        "weight": "bold",
+                        "align": "center",
+                        "color": "#0F172A",
+                    },
+                    {
+                        "type": "text",
+                        "text": f"🗓️ วันที่ {today_text}  |  หน้า {page_no}/{total_pages}",
+                        "size": "xs",
+                        "align": "center",
+                        "color": "#64748B",
+                        "margin": "xs",
+                    },
+                    {
+                        "type": "text",
+                        "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}   รวม {total_rows} ค่าย",
+                        "size": "sm",
+                        "weight": "bold",
+                        "align": "center",
+                        "color": "#111827",
+                        "margin": "md",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "margin": "md",
+                        "contents": table_contents,
+                    },
+                ],
+            },
+        }
+
+    # แบ่ง rows เป็น 3 หน้า — ค่ายล่าสุดอยู่หน้าสุดท้าย (เลื่อนขวาสุด)
+    total = len(rows[:limit])
+    per_page = max(1, -(-total // 3))  # ceiling division
+    pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
+    total_pages = len(pages)
+
+    if total_pages == 1:
+        # ค่ายน้อย — bubble เดียวพอ
+        return _make_bubble(pages[0], 1, 1, 1, total)
+
+    bubbles = []
+    start = 1
+    for p_no, page_rows in enumerate(pages, start=1):
+        bubbles.append(_make_bubble(page_rows, start, p_no, total_pages, total))
+        start += len(page_rows)
+
+    return {"type": "carousel", "contents": bubbles}
 
 
 def scoreboard_empty_text(chat_id: str = None) -> str:
@@ -10307,6 +10324,7 @@ def settle_round(result_value: int):
 
     STATE["result"] = result_value
     STATE["settled"] = True
+    STATE["settled_at_ts"] = time.time()
     STATE["opened"] = False
     STATE["updated_at"] = now_text()
     STATE["pending_result"] = None
@@ -10496,6 +10514,7 @@ def settle_round_all_jow(reason: str):
 
     STATE["result"] = reason
     STATE["settled"] = True
+    STATE["settled_at_ts"] = time.time()
     STATE["opened"] = False
     STATE["updated_at"] = now_text()
     STATE["pending_result"] = None
@@ -13105,6 +13124,11 @@ def handle_message(event):
         reply_problem(event, camp_scope.get("error"))
         return
 
+    # ถ้าแอดมิน copy/forward ข้อความรายการค่าย (ขึ้นต้นด้วย 🚀🔥 คุยกันเลย) → เงียบ
+    # ไม่ต้อง parse เพราะจะทำให้บอทตอบ ambiguous รบกวนลูกค้า
+    if is_admin(user_id) and filter_text.startswith("🚀🔥 คุยกันเลย"):
+        return
+
     text = filter_text
     implicit_scope = False
     if not base_scope and not camp_scope:
@@ -13403,6 +13427,29 @@ def handle_message(event):
         reply_flex(event.reply_token, "รายการเล่นของคุณ", active_plays_flex(user_id))
         return
 
+    # รายการเล่น — แสดงค่ายที่เปิดอยู่ตอนนี้ (ใช้ได้ในกลุ่ม)
+    if text.replace(" ", "") in {"รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}:
+        _open_lines = []
+        for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
+            if not isinstance(_st, dict):
+                continue
+            if _st.get("opened") and _st.get("round_id"):
+                _c = _st.get("camp_name") or "-"
+                _mn = _st.get("base_min")
+                _mx = _st.get("base_max")
+                if _mn is not None and _mx is not None:
+                    _open_lines.append(f"{_c}\nช่าง  {format_price_range_text(_mn, _mx)}")
+                else:
+                    _open_lines.append(f"{_c}\nช่าง  ⛔️")
+
+
+        if _open_lines:
+            _body = "\n\n".join(_open_lines)
+            reply_text(event.reply_token, f"🚀🔥 คุยกันเลย 🔥🚀\n\n{_body}\n\n🚀🚀🚀🚀🚀")
+        else:
+            reply_text(event.reply_token, "ยังไม่มีค่ายที่เปิดอยู่ตอนนี้")
+        return
+
     if text in ["เช็คยอด", "เครดิต", "ยอด", "เงิน"]:
         # เช็คยอดใช้ได้เฉพาะแชทส่วนตัวกับ OA; ถ้าพิมพ์ในกลุ่มบอทเงียบ
         if not is_private_chat(event):
@@ -13437,6 +13484,61 @@ def handle_message(event):
             msg = change_camp_and_refund_wrong_round(change_camp_name, get_current_chat_id(event))
 
         reply_text(event.reply_token, msg)
+        return
+
+    # ช่าง <ค่าย> <min-max | single3> — ยืนยัน/เปลี่ยนราคากลางหลังปิด (admin เท่านั้น)
+    _ch_m = re.match(r"^ช่าง\s+(.+?)\s+(\d+)\s*[-/]\s*(\d+)$", text.strip())
+    _ch_m_single = re.match(r"^ช่าง\s+(.+?)\s+(\d{3})$", text.strip()) if not _ch_m else None
+    if _ch_m or _ch_m_single:
+        if not is_admin(user_id):
+            reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
+            return
+        if not is_front_chat(event):
+            reply_text(event.reply_token, front_room_block_text("เปลี่ยนราคา"))
+            return
+        if _ch_m:
+            _ch_camp = _ch_m.group(1).strip()
+            _ch_a, _ch_b = int(_ch_m.group(2)), int(_ch_m.group(3))
+        else:
+            _ch_camp = _ch_m_single.group(1).strip()
+            _ch_a = _ch_b = int(_ch_m_single.group(2))
+        if _ch_a > _ch_b:
+            _ch_a, _ch_b = _ch_b, _ch_a
+        with STATE_LOCK:
+            _ch_state = None
+            for _bn, _st in ROUNDS.items():
+                if not isinstance(_st, dict):
+                    continue
+                if normalize_camp_key(_st.get("camp_name")) == normalize_camp_key(_ch_camp):
+                    if _st.get("round_id") and not _st.get("settled"):
+                        _ch_state = _st
+                        break
+            if _ch_state is None:
+                reply_text(event.reply_token, f"❌ ไม่พบค่ายที่ยังค้างอยู่: {_ch_camp}")
+                return
+            _ch_state["base_min"] = _ch_a
+            _ch_state["base_max"] = _ch_b
+            _ch_state["price_mode"] = "normal"
+            _ch_state["updated_at"] = now_text()
+            save_round_backup_db(reason="price_changed")
+        _open_lines2 = []
+        for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
+            if not isinstance(_st, dict):
+                continue
+            if _st.get("opened") and _st.get("round_id"):
+                _c2 = _st.get("camp_name") or "-"
+                _mn2 = _st.get("base_min")
+                _mx2 = _st.get("base_max")
+                if _mn2 is not None and _mx2 is not None:
+                    _open_lines2.append(f"{_c2}\nช่าง  {format_price_range_text(_mn2, _mx2)}")
+                else:
+                    _open_lines2.append(f"{_c2}\nช่าง  ⛔️")
+        _body2 = "\n\n".join(_open_lines2) if _open_lines2 else f"{_ch_camp}\nช่าง  {format_price_range_text(_ch_a, _ch_b)}"
+        reply_text(
+            event.reply_token,
+            f"✅ ยืนยันราคากลาง {_ch_camp}: {format_price_range_text(_ch_a, _ch_b)} แล้ว\n\n"
+            f"🚀🔥 คุยกันเลย 🔥🚀\n\n{_body2}\n\n🚀🚀🚀🚀🚀"
+        )
         return
 
     # เปลี่ยนราคากลาง: เปลี่ยนราคา ชื่อค่าย 320-340
