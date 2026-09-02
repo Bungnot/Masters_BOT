@@ -6353,10 +6353,11 @@ def parse_open_command(text):
     รับคำสั่งเปิดรอบ:
     - เปิด ชื่อค่าย               => (camp_name, None, None)
     - เปิด ชื่อค่าย 285-305       => (camp_name, 285, 305)
+    - เปิด ชื่อค่าย 320           => (camp_name, 320, 320)
     คืน (camp_name, base_min, base_max) หรือ None
     """
     raw = text.strip()
-    # รูปแบบมีราคากลาง: เปิด <ชื่อค่าย> <min>-<max>
+    # รูปแบบมีราคากลางแบบช่วง: เปิด <ชื่อค่าย> <min>-<max>
     m = re.match(r"^เปิด\s+(.+?)\s+(\d+)\s*[-/]\s*(\d+)$", raw)
     if m:
         camp_name = m.group(1).strip()
@@ -6364,6 +6365,12 @@ def parse_open_command(text):
         if a > b:
             a, b = b, a
         return (camp_name, a, b)
+    # รูปแบบราคาเดียว 3 หลัก: เปิด <ชื่อค่าย> 320
+    m = re.match(r"^เปิด\s+(.+?)\s+(\d{3})$", raw)
+    if m:
+        camp_name = m.group(1).strip()
+        price = int(m.group(2))
+        return (camp_name, price, price)
     # รูปแบบไม่มีราคา: เปิด <ชื่อค่าย>
     m = re.match(r"^เปิด\s+(.+)$", raw)
     if m:
@@ -6703,7 +6710,19 @@ def find_camp_in_text(text: str) -> tuple:
 
     def _play_parseable(t: str) -> bool:
         c = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", t or "")
-        return bool(re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c))
+        # แบบปกติ: ชล500 / +5ชล500
+        if re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c):
+            return True
+        # แบบตัวเลขช่วง 3 หลัก: 280-290ล500 / 330/360ล500 / 330-360+5ล500
+        if re.match(rf"^(?:ตัว)?\d{{3}}[-/]\d{{3}}([+-]\d+)?({alias_pat})\d+(ชตย)?$", c):
+            return True
+        # แบบตัวเลขเดียว 3 หลัก: 400ล500 / 400+5ล500
+        if re.match(rf"^\d{{3}}([+-]\d+)?({alias_pat})\d+(ชตย)?$", c):
+            return True
+        # แบบเลข 2 ตัว: 30-70ล500 / 3-7ล500
+        if re.match(rf"^(?:ตัว)?\d{{1,2}}[-/]\d{{1,2}}({alias_pat})\d+(ชตย)?$", c):
+            return True
+        return False
 
     def _build_tokens(camp_name: str) -> list:
         """สร้าง token จาก substring ของชื่อค่าย หลังลบวรรณยุกต์
@@ -14086,9 +14105,42 @@ def handle_message(event):
             if len(_open_states) == 1:
                 _post_round_state = _open_states[0]
             elif len(_open_states) > 1:
-                _camp_names = ", ".join(st.get("camp_name", "-") for st in _open_states)
-                reply_problem(event, f"⚠️ มีหลายค่ายเปิดอยู่ กรุณาระบุชื่อค่ายก่อนเล่น\nเช่น: เจริญ ล 500\n\nค่ายที่เปิดอยู่: {_camp_names}")
-                return
+                # ถ้าเป็นการเล่นตัวเลขแบบระบุช่วงราคาเอง (custom_price) เช่น 280-290ล500
+                # ให้เลือกค่ายที่ราคาช่างใกล้เคียงกับช่วงราคาที่ลูกค้าเล่นมากที่สุด
+                # โดยไม่บังคับให้ระบุชื่อค่าย
+                _is_custom_price_play = offer.get("is_custom_price") and not offer.get("is_two_digit_price")
+                if _is_custom_price_play:
+                    _play_min = offer.get("custom_price_min")
+                    _play_max = offer.get("custom_price_max")
+                    # หาค่ายที่ราคาช่างใกล้เคียงที่สุด
+                    _best_state = None
+                    _best_score = None
+                    _states_with_price = [st for st in _open_states if st.get("base_min") is not None and st.get("base_max") is not None]
+                    if _states_with_price and _play_min is not None and _play_max is not None:
+                        for _st in _states_with_price:
+                            _bmin = int(_st["base_min"])
+                            _bmax = int(_st["base_max"])
+                            # คำนวณระยะห่างระหว่างช่วงราคาเล่นกับราคาช่างของค่ายนี้
+                            if _play_max < _bmin:
+                                _gap = _bmin - _play_max
+                            elif _play_min > _bmax:
+                                _gap = _play_min - _bmax
+                            else:
+                                _gap = 0  # ช่วงทับกัน
+                            _bcenter = (_bmin + _bmax) / 2
+                            _pcenter = (_play_min + _play_max) / 2
+                            _center_gap = abs(_pcenter - _bcenter)
+                            _score = (_gap, _center_gap)
+                            if _best_score is None or _score < _best_score:
+                                _best_score = _score
+                                _best_state = _st
+                    # ถ้าค่ายที่เจอมีราคาช่างหลายค่ายและใกล้เคียงกันเท่ากัน ให้ใช้ค่ายแรกที่ดีสุด
+                    # ถ้าไม่มีค่ายไหนมีราคาช่างเลย ให้ fallback เป็นค่ายแรกที่เปิดอยู่
+                    _post_round_state = _best_state or _open_states[0]
+                else:
+                    _camp_names = ", ".join(st.get("camp_name", "-") for st in _open_states)
+                    reply_problem(event, f"⚠️ มีหลายค่ายเปิดอยู่ กรุณาระบุชื่อค่ายก่อนเล่น\nเช่น: เจริญ ล 500\n\nค่ายที่เปิดอยู่: {_camp_names}")
+                    return
         msg = create_post(event, offer, round_state=_post_round_state)
         if msg:
             reply_problem(event, msg)
