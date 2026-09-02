@@ -3741,7 +3741,7 @@ def scoreboard_rows_for_chat(chat_id: str = None):
             return None
         if not st.get("round_id") or not st.get("settled"):
             return None
-        if st.get("result") is None:
+        if st.get("result") is None or st.get("result") == "cancelled":
             return None
         status = scoreboard_status_from_round(st)
         try:
