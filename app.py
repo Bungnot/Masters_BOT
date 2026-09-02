@@ -14070,6 +14070,16 @@ def handle_message(event):
         handle_clear_all(event, user_id)
         return
 
+    # ตอบติด / ยืนยัน เช่น ต, ติด, ต300, ติด300, 300ต, 300ติด
+    # ต้องตรวจก่อน find_camp_in_text เพราะ "ต" อาจ match ชื่อค่ายแล้วทำให้ ambiguous ผิดพลาด
+    confirm_cmd = parse_confirm_command(text)
+    if confirm_cmd:
+        quoted_message_id = get_reply_message_id(event)
+        msg = handle_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
+        if msg:
+            reply_problem(event, msg)
+        return
+
     # ลูกค้าโพสต์ เช่น ชล500 / ชถ500
     # รองรับชื่อค่ายนำหน้าหรือตามหลัง เช่น "เจ ล 500" / "น้องเจ ล 500" / "ชล เจ 500"
     _matched_camp, _play_text, _matched_base_no = find_camp_in_text(text)
@@ -14160,15 +14170,6 @@ def handle_message(event):
                     reply_problem(event, f"⚠️ มีหลายค่ายเปิดอยู่ กรุณาระบุชื่อค่ายก่อนเล่น\nเช่น: เจริญ ล 500\n\nค่ายที่เปิดอยู่: {_camp_names}")
                     return
         msg = create_post(event, offer, round_state=_post_round_state)
-        if msg:
-            reply_problem(event, msg)
-        return
-
-    # ตอบติด / ยืนยัน เช่น ต, ติด, ต300, ติด300, 300ต, 300ติด
-    confirm_cmd = parse_confirm_command(text)
-    if confirm_cmd:
-        quoted_message_id = get_reply_message_id(event)
-        msg = handle_confirm(event, quoted_message_id, confirm_cmd.get("amount"))
         if msg:
             reply_problem(event, msg)
         return
