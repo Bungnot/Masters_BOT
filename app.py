@@ -3871,16 +3871,16 @@ def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
             },
         }
 
-    # แบ่ง rows เป็น 3 หน้า — ค่ายล่าสุดอยู่หน้าสุดท้าย (เลื่อนขวาสุด)
+    # ถ้าน้อยกว่า 40 ค่าย — bubble เดียวพอ ไม่ต้องแบ่งหน้า
     total = len(rows[:limit])
-    per_page = max(1, -(-total // 3))  # ceiling division
+    per_page = 40
+
+    if total <= per_page:
+        return _make_bubble(rows[:total], 1, 1, 1, total)
+
+    # ถ้า 40+ ค่าย แบ่งหน้าละ 40 รายการ เลื่อนขวาได้
     pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
     total_pages = len(pages)
-
-    if total_pages == 1:
-        # ค่ายน้อย — bubble เดียวพอ
-        return _make_bubble(pages[0], 1, 1, 1, total)
-
     bubbles = []
     start = 1
     for p_no, page_rows in enumerate(pages, start=1):
@@ -6342,6 +6342,20 @@ def reply_text_and_flex(reply_token, text, alt_text, flex_dict, quote_token=None
         ],
     }
     return _post_line_api(LINE_API_REPLY_URL, payload, LINE_REPLY_TIMEOUT_SECONDS, "REPLY TEXT+FLEX")
+
+
+def reply_two_flex(reply_token, alt1, flex1, alt2, flex2):
+    """ส่ง 2 Flex ใน replyToken เดียวกัน เช่น ผลแจ้ง + สกอ"""
+    if not flex1 or not flex2:
+        return False
+    payload = {
+        "replyToken": reply_token,
+        "messages": [
+            line_flex_payload(alt1, flex1),
+            line_flex_payload(alt2, flex2),
+        ],
+    }
+    return _post_line_api(LINE_API_REPLY_URL, payload, LINE_REPLY_TIMEOUT_SECONDS, "REPLY 2FLEX")
 
 
 def push_text(to, text):
@@ -13996,7 +14010,11 @@ def handle_message(event):
 
         msg = handle_special_result_with_double_confirm(special_result)
         if is_result_flex_reply_payload(msg):
-            reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
+            _score_flex = scoreboard_flex_for_chat(get_current_chat_id(event))
+            if _score_flex:
+                reply_two_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"), "📋 ผลบั้งไฟ", _score_flex)
+            else:
+                reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
         else:
             reply_text(event.reply_token, msg)
         return
@@ -14018,7 +14036,11 @@ def handle_message(event):
 
         msg = handle_result_with_double_confirm(result_value)
         if is_result_flex_reply_payload(msg):
-            reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
+            _score_flex = scoreboard_flex_for_chat(get_current_chat_id(event))
+            if _score_flex:
+                reply_two_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"), "📋 ผลบั้งไฟ", _score_flex)
+            else:
+                reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
         else:
             reply_text(event.reply_token, msg)
         return
