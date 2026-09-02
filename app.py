@@ -13344,6 +13344,86 @@ def handle_message(event):
         return
 
     score_clean = re.sub(r"\s+", "", (text or "").strip()).lower()
+    if text.strip().lower() == "testscore":
+        if not is_admin(user_id):
+            reply_text(event.reply_token, "คำสั่งนี้ใช้ได้เฉพาะแอดมิน")
+            return
+        # สร้าง dummy 120 รายการสำหรับทดสอบ scoreboard
+        import random
+        _dummy_rows = []
+        _camp_names = ["แมวป่า","เดินทาง","กันเทพ","งามดี","ทองภัคดี","นกเผือก","มหาลัย",
+                       "ดีสนิท","หัวฝู","สมานฉันท์","เมืองไทย","ปลดเทวดา","จัดทอง","มึ่งเมือง",
+                       "พัทยา","บริการ","กิจนา","ดารมา","สหาย","ไม่สวย","บัง","เพรช","หลงวัด"]
+        _statuses = [
+            ("ชนะ", "✅✅", "#16A34A"),
+            ("แพ้", "❌❌", "#DC2626"),
+            ("จาว", "⛔⛔", "#6B7280"),
+        ]
+        for i in range(120):
+            _camp = _camp_names[i % len(_camp_names)] + (f" ({i//len(_camp_names)+1})" if i >= len(_camp_names) else "")
+            _mn = random.randint(260, 340)
+            _mx = _mn + random.choice([0, 10, 20, 30])
+            _result = random.randint(_mn - 20, _mx + 20)
+            _sw, _si, _sc = _statuses[i % 3]
+            _dummy_rows.append({
+                "sort": (float(i), str(i)),
+                "base_no": str(i + 1),
+                "camp_name": _camp,
+                "price_text": f"{_mn}-{_mx}" if _mn != _mx else str(_mn),
+                "result_text": str(_result),
+                "status_word": _sw,
+                "status_icons": _si,
+                "status_color": _sc,
+            })
+        # ใช้ logic เดียวกับ scoreboard_flex_for_chat แต่ inject dummy rows
+        _win = sum(1 for r in _dummy_rows if r["status_word"] == "ชนะ")
+        _lose = sum(1 for r in _dummy_rows if r["status_word"] == "แพ้")
+        _jow = sum(1 for r in _dummy_rows if r["status_word"] == "จาว")
+        _today = datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y")
+
+        def _hdr():
+            return {"type":"box","layout":"horizontal","backgroundColor":"#F3F4F6","paddingAll":"6px","contents":[
+                {"type":"text","text":"#","size":"xs","weight":"bold","color":"#475569","flex":1},
+                {"type":"text","text":"ชื่อค่าย","size":"xs","weight":"bold","color":"#475569","flex":5},
+                {"type":"text","text":"ราคาช่าง","size":"xs","weight":"bold","align":"end","color":"#475569","flex":3},
+                {"type":"text","text":"ผล","size":"xs","weight":"bold","align":"end","color":"#475569","flex":3},
+            ]}
+
+        def _make_bubble(page_rows, start_idx, p_no, total_pages, total):
+            tbl = [_hdr()]
+            for idx, row in enumerate(page_rows, start=start_idx):
+                tbl.extend([
+                    {"type":"box","layout":"horizontal","paddingTop":"7px","paddingBottom":"7px","contents":[
+                        {"type":"text","text":f"{idx}.","size":"xs","weight":"bold","color":"#334155","flex":1},
+                        {"type":"text","text":row["camp_name"],"size":"xs","weight":"bold","wrap":True,"color":"#0F172A","flex":5},
+                        {"type":"text","text":row["price_text"],"size":"xs","weight":"bold","align":"end","color":"#0F172A","flex":3,"adjustMode":"shrink-to-fit","maxLines":1},
+                        {"type":"text","text":f"{row['result_text']} {row['status_icons']}","size":"xs","weight":"bold","align":"end","color":row["status_color"],"flex":3,"adjustMode":"shrink-to-fit","maxLines":1},
+                    ]},
+                    {"type":"separator","color":"#E5E7EB"},
+                ])
+            return {"type":"bubble","size":"giga","body":{"type":"box","layout":"vertical","paddingAll":"10px","backgroundColor":"#FFFFFF","contents":[
+                {"type":"text","text":"📋 ผลบั้งไฟ [TEST] 📋","size":"lg","weight":"bold","align":"center","color":"#0F172A"},
+                {"type":"text","text":f"🗓️ {_today}  |  หน้า {p_no}/{total_pages}","size":"xs","align":"center","color":"#64748B","margin":"xs"},
+                {"type":"text","text":f"✅ ชนะ {_win}   ❌ แพ้ {_lose}   ⛔ จาว {_jow}   รวม {total} ค่าย","size":"sm","weight":"bold","align":"center","color":"#111827","margin":"md","wrap":True},
+                {"type":"box","layout":"vertical","margin":"md","contents":tbl},
+            ]}}
+
+        _total = len(_dummy_rows)
+        _per_page = 40
+        _pages = [_dummy_rows[i:i+_per_page] for i in range(0, _total, _per_page)]
+        _total_pages = len(_pages)
+        if _total_pages == 1:
+            _flex = _make_bubble(_pages[0], 1, 1, 1, _total)
+        else:
+            _bubbles = []
+            _start = 1
+            for _pno, _prows in enumerate(_pages, start=1):
+                _bubbles.append(_make_bubble(_prows, _start, _pno, _total_pages, _total))
+                _start += len(_prows)
+            _flex = {"type":"carousel","contents":_bubbles}
+        reply_flex(event.reply_token, f"TEST SCORE — {_total} รายการ", _flex)
+        return
+
     if is_scoreboard_command(text) and not (is_private_chat(event) and score_clean == "รายการ"):
         flex = scoreboard_flex_for_chat(get_current_chat_id(event))
         if flex:
