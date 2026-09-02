@@ -14015,6 +14015,10 @@ def handle_message(event):
             _notify_camp_name = str(_real_camp_name)
 
             def _push_cancel_notifications(round_id=_notify_round_id, camp_name=_notify_camp_name):
+                # รวม match ทั้งหมดของแต่ละ user ก่อน แล้วส่ง Flex เดียว
+                from collections import defaultdict
+                user_matches = defaultdict(list)  # uid -> [(match, refund_amt)]
+
                 for _match in list(MATCHES.values()):
                     if _match.get("round_id") != round_id:
                         continue
@@ -14022,16 +14026,30 @@ def handle_message(event):
                         continue
                     _amt = int(_match.get("amount", 0) or 0)
                     for _uid in [_match.get("maker_id"), _match.get("taker_id")]:
-                        if not _uid:
-                            continue
-                        try:
-                            _flex = camp_cancel_notify_flex(_match, camp_name, _amt)
+                        if _uid:
+                            user_matches[_uid].append((_match, _amt))
+
+                for _uid, _items in user_matches.items():
+                    try:
+                        if len(_items) == 1:
+                            # รายการเดียว — ส่ง bubble เดิม
+                            _flex = camp_cancel_notify_flex(_items[0][0], camp_name, _items[0][1])
                             push_flex(_uid, f"ยกเลิกค่าย {camp_name}", _flex)
-                        except Exception as _e:
-                            try:
-                                push_text(_uid, f"❌ ยกเลิกค่าย {camp_name} แล้ว คืนเครดิต {_amt:,} บาท")
-                            except Exception:
-                                pass
+                        else:
+                            # หลายรายการ — รวมเป็น carousel
+                            _total_refund = sum(amt for _, amt in _items)
+                            _bubbles = [camp_cancel_notify_flex(m, camp_name, amt) for m, amt in _items]
+                            _carousel = {
+                                "type": "carousel",
+                                "contents": _bubbles,
+                            }
+                            push_flex(_uid, f"ยกเลิกค่าย {camp_name} ({len(_items)} รายการ คืนรวม {_total_refund:,})", _carousel)
+                    except Exception as _e:
+                        try:
+                            _total = sum(amt for _, amt in _items)
+                            push_text(_uid, f"❌ ยกเลิกค่าย {camp_name} แล้ว คืนเครดิตรวม {_total:,} บาท ({len(_items)} รายการ)")
+                        except Exception:
+                            pass
             EXECUTOR.submit(_push_cancel_notifications)
 
             reply_text(
