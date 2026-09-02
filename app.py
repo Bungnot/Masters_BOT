@@ -565,7 +565,11 @@ def used_base_numbers_for_chat(chat_id: str = None):
             continue
         if chat_id and st.get("chat_id") and st.get("chat_id") != chat_id:
             continue
-        if st.get("round_id") and not st.get("backup_status") == "cleared":
+        # ฐานว่างคือ: ไม่มี round_id / settled แล้ว / ถูก clear
+        _has_round = bool(st.get("round_id"))
+        _settled = bool(st.get("settled"))
+        _cleared = st.get("backup_status") == "cleared"
+        if _has_round and not _settled and not _cleared:
             used.add(normalize_base_no(st.get("base_no") or base_no))
     return used
 
@@ -590,11 +594,20 @@ def get_any_opened_round():
 
 
 def select_base_for_new_round(chat_id: str = None):
-    """เปิดรอบใหม่แบบไม่ต้องระบุฐาน: ถ้าฐานปัจจุบันมีรอบค้าง/รอบเก่า ให้ขยับฐานใหม่อัตโนมัติ"""
-    current_has_round = bool(STATE.get("round_id"))
-    current_busy = current_has_round and not STATE.get("backup_status") == "cleared"
-    if not current_busy:
-        return STATE
+    """เปิดรอบใหม่แบบไม่ต้องระบุฐาน: หาฐานว่างจริงๆ จาก ROUNDS ทั้งหมด
+    ฐานว่าง = ไม่มี round_id / settled แล้ว / ถูก clear — นำกลับมาใช้ใหม่ได้"""
+    for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 999):
+        if not isinstance(_st, dict):
+            continue
+        _has_round = bool(_st.get("round_id"))
+        _settled = bool(_st.get("settled"))
+        _cleared = _st.get("backup_status") == "cleared"
+        _busy = _has_round and not _settled and not _cleared
+        if not _busy:
+            # รีเซ็ต state ของฐานนี้ให้พร้อมใช้ใหม่ก่อน
+            _st.clear()
+            _st.update(make_round_state(_bn))
+            return select_round_base(_bn, chat_id=chat_id, create=False)
     return select_round_base(next_available_base_no(chat_id), chat_id=chat_id, create=True)
 
 
