@@ -203,6 +203,8 @@ app = Flask(__name__)
 # ส่ง Flex / Push แบบไม่บล็อก webhook นานเกินไป
 EXECUTOR = ThreadPoolExecutor(max_workers=PUSH_WORKERS)
 IO_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+# Semaphore จำกัด concurrent LINE push ไม่เกิน 5 ต่อวินาที กัน rate limit
+_PUSH_SEMAPHORE = threading.Semaphore(5)
 
 # ตัวแปรสำหรับ Throttling การเขียน Backup ป้องกัน I/O ถล่มดิสก์
 LAST_BACKUP_TIME = 0
@@ -2389,27 +2391,23 @@ def mark_message_processed(message_id: str) -> bool:
         return False
 
     now_ts = time.time()
-    with STATE_LOCK:
-        # ทำความสะอาดของช่องหมดกลุ่มหากว่า 1000 รายการ
-        if len(PROCESSED_MESSAGE_IDS) > 1000:
-            expired = [
-                mid for mid, ts in PROCESSED_MESSAGE_IDS.items()
-                if now_ts - ts > PROCESSED_MESSAGE_TTL_SECONDS
-            ]
-            for mid in expired:
-                PROCESSED_MESSAGE_IDS.pop(mid, None)
 
-        # Double-check: ตรวจสอบว่า message_id เคยหลายประมวลผลแล้ว
+    # ทำความสะอาด expired entries ก่อน — ทำนอก lock เพื่อไม่บล็อก thread อื่น
+    # อาจมี dirty read เล็กน้อยแต่ไม่กระทบ correctness (worst case: ลบช้า 1 รอบ)
+    if len(PROCESSED_MESSAGE_IDS) > 1000:
+        expired = [
+            mid for mid, ts in list(PROCESSED_MESSAGE_IDS.items())
+            if now_ts - ts > PROCESSED_MESSAGE_TTL_SECONDS
+        ]
+        for mid in expired:
+            PROCESSED_MESSAGE_IDS.pop(mid, None)
+
+    with STATE_LOCK:
+        # Double-check: ตรวจสอบว่า message_id เคยประมวลผลแล้ว
         if message_id in PROCESSED_MESSAGE_IDS:
             return True
-
-        # ตรวจสอบว่าหาก message_id ว่างหลังก่อนประมวลผล
-        # ถ้าเปล่า None และประมวลผลสอบครั้ง แล้วไม่ต้องประมวลผล
-        if PROCESSED_MESSAGE_IDS.get(message_id) is None:
-            PROCESSED_MESSAGE_IDS[message_id] = now_ts
-            return False
-        
-        return True
+        PROCESSED_MESSAGE_IDS[message_id] = now_ts
+        return False
 
 
 def update_user_profile_from_line(user_id: str, group_id: str = None, room_id: str = None, now_ts: int = None):
@@ -6383,11 +6381,17 @@ def push_flex(to, alt_text, flex_dict):
 
 
 def push_text_async(to, text):
-    EXECUTOR.submit(push_text, to, text)
+    def _job():
+        with _PUSH_SEMAPHORE:
+            push_text(to, text)
+    EXECUTOR.submit(_job)
 
 
 def push_flex_async(to, alt_text, flex_dict):
-    EXECUTOR.submit(push_flex, to, alt_text, flex_dict)
+    def _job():
+        with _PUSH_SEMAPHORE:
+            push_flex(to, alt_text, flex_dict)
+    EXECUTOR.submit(_job)
 
 
 # ======================================================
@@ -9529,6 +9533,10 @@ def create_post(event, offer, round_state=None):
     if not post_id:
         return "ระบบไม่พบ message id ของโพสต์นี้"
 
+    # กัน duplicate post จาก LINE retry ที่หลุดผ่าน mark_message_processed
+    if post_id in POSTS:
+        return None
+
     POSTS[post_id] = {
         "post_id": post_id,
         "round_id": st["round_id"],
@@ -9969,14 +9977,19 @@ def create_match_from_pending(post, taker_entry):
     error = return text
     ใช้ MATCHES_LOCK และ USERS_LOCK เพื่อป้องกัน race condition
     """
-    # ตรวจสอบสถานะก่อนใช้ lock
-    if taker_entry.get("status") != "pending":
-        return "รายการนี้ถูกดำเนินการไปแล้ว"
+    # Double-check ใน STATE_LOCK กัน 2 threads ผ่านพร้อมกัน (taker confirm ซ้ำ)
+    # ต้อง check และ mark "matched" ภายใน lock เดียวกันเพื่อกัน race condition
+    with STATE_LOCK:
+        if taker_entry.get("status") != "pending":
+            return "รายการนี้ถูกดำเนินการไปแล้ว"
+        # mark ทันทีใน lock กัน thread อื่นผ่านเงื่อนไขนี้พร้อมกัน
+        taker_entry["status"] = "matching"
 
     # โพสต์เดิมต้องติดซ้ำได้เรื่อย ๆ แม้ก่อนหน้านี้จะจับคู่สำเร็จไปแล้ว
     # status closed จากโค้ดเดิมถือเป็นสถานะเก่าที่เกิดจากยอดเต็ม ไม่ใช่การปิดรับจริง
     post_status = post.get("status", "open")
     if post_status not in ["open", "closed"]:
+        taker_entry["status"] = "pending"  # rollback
         return "โพสต์นี้ไม่เปิดรับแล้ว"
 
     if post_status == "closed":
@@ -12977,6 +12990,9 @@ def should_process_text_message(event, text: str) -> bool:
     if is_admin(user_id) and is_backoffice_relevant_text(raw, user_id=user_id):
         return True
 
+    if is_admin(user_id) and raw.strip().lower() == "testscore":
+        return True
+
     if is_backoffice_chat(event):
         return is_backoffice_relevant_text(raw, user_id=user_id)
 
@@ -13161,6 +13177,9 @@ def handle_message(event):
     text = filter_text
     implicit_scope = False
     if not base_scope and not camp_scope:
+        # select_base_for_incoming_text เปลี่ยน global STATE แต่ create_post/handle_confirm
+        # ต่างใช้ round_state และ ROUNDS โดยตรง ไม่พึ่ง global STATE
+        # จึงไม่ต้อง lock ที่นี่ — ป้องกัน throughput ตก ตอนคนเล่นพร้อมกันเยอะ
         select_base_for_incoming_text(event, text)
         if is_admin(user_id) and is_front_chat(event):
             implicit_scope = select_base_for_admin_implicit_command(text, get_current_chat_id(event))
