@@ -3821,8 +3821,8 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
             ]},
         }
 
-    per_page = 25
-    bubbles_per_carousel = 4
+    per_page = 20
+    bubbles_per_carousel = 2  # 2×~13KB = ~26KB well under 50KB limit
     if total <= per_page:
         return _make_bubble(rows[:total], 1, 1, 1)
     all_pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
