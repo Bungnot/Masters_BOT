@@ -3780,14 +3780,14 @@ def scoreboard_rows_for_chat(chat_id: str = None):
 
 
 def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
-    """แบบสวย xs font — 15 rows/bubble, 4 bubble/carousel (~40KB) เลื่อนขวาได้
-    ชื่อค่ายตัดที่ 7 ตัวอักษร, ลำดับ flex=2 รองรับ 3 หลัก
+    """แบบสวย xs font — 15 rows/bubble, 4 bubble/carousel (~35KB) เลื่อนขวาได้
+    ชื่อค่าย 6 ตัว, ราคาช่าง center, ผล end — ไม่ติดกัน
     120 รายการ = 8 bubble = 2 carousel (reply + push)
     """
     if not rows:
         return None
 
-    def _trim(name, maxlen=7):
+    def _trim(name, maxlen=6):
         name = name or "-"
         return name if len(name) <= maxlen else name[:maxlen] + ".."
 
@@ -3804,8 +3804,8 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
                 "backgroundColor": "#F3F4F6", "paddingAll": "6px",
                 "contents": [
                     {"type": "text", "text": "#", "size": "xs", "weight": "bold", "color": "#475569", "flex": 2},
-                    {"type": "text", "text": "ชื่อค่าย", "size": "xs", "weight": "bold", "color": "#475569", "flex": 6},
-                    {"type": "text", "text": "ราคาช่าง", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 4},
+                    {"type": "text", "text": "ชื่อค่าย", "size": "xs", "weight": "bold", "color": "#475569", "flex": 5},
+                    {"type": "text", "text": "ช่าง", "size": "xs", "weight": "bold", "align": "center", "color": "#475569", "flex": 4},
                     {"type": "text", "text": "ผล", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 3},
                 ],
             }
@@ -3817,9 +3817,9 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
                     "paddingTop": "6px", "paddingBottom": "6px",
                     "contents": [
                         {"type": "text", "text": f"{idx}.", "size": "xs", "color": "#334155", "flex": 2},
-                        {"type": "text", "text": _trim(row.get("camp_name")), "size": "xs", "color": "#0F172A", "flex": 6},
-                        {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "align": "end", "color": "#475569", "flex": 4, "adjustMode": "shrink-to-fit", "maxLines": 1},
-                        {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons', '')}", "size": "xs", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                        {"type": "text", "text": _trim(row.get("camp_name")), "size": "xs", "color": "#0F172A", "flex": 5},
+                        {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "align": "center", "color": "#475569", "flex": 4},
+                        {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons', '')}", "size": "xs", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3},
                     ],
                 },
                 {"type": "separator", "color": "#E5E7EB"},
@@ -3838,7 +3838,7 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
         }
 
     per_page = 15
-    bubbles_per_carousel = 4  # 4 × ~10KB = ~40KB ✅
+    bubbles_per_carousel = 4  # 4 × ~8.8KB = ~35KB ✅
     all_pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
     total_pages = len(all_pages)
 
