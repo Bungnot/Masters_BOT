@@ -13355,21 +13355,26 @@ def handle_message(event):
                 "status_color": _sc,
             })
         _flex = _build_scoreboard_flex_from_rows(_rows)
-        if isinstance(_flex, list):
-            _push_scoreboard_if_list(get_current_chat_id(event), _flex[1:])
-            _flex = _flex[0]
-        if _flex:
-            reply_flex(event.reply_token, "TEST SCORE — 120 รายการ", _flex)
-        else:
+        if not _flex:
             reply_text(event.reply_token, "ไม่สามารถสร้าง test score ได้")
+            return
+        _chat_id = get_current_chat_id(event)
+        if isinstance(_flex, list):
+            # หลาย carousel — reply แจ้งก่อน แล้ว push ทุกอัน
+            reply_text(event.reply_token, f"📋 TEST SCORE 120 รายการ — กำลังส่ง {len(_flex)} ชุด...")
+            for _i, _f in enumerate(_flex):
+                push_flex(_chat_id, f"TEST SCORE {_i+1}/{len(_flex)}", _f)
+        else:
+            reply_flex(event.reply_token, "TEST SCORE — 120 รายการ", _flex)
         return
     if is_scoreboard_command(text) and not (is_private_chat(event) and score_clean == "รายการ"):
         flex = scoreboard_flex_for_chat(get_current_chat_id(event))
         if flex:
+            _chat_id = get_current_chat_id(event)
             if isinstance(flex, list):
-                # หลาย carousel — push ทุกอัน reply แจ้งสั้นๆ
-                _push_scoreboard_if_list(get_current_chat_id(event), flex)
-                reply_text(event.reply_token, f"📋 ส่งสกอ {len(flex)} ชุดแล้ว (เลื่อนดูใน DM ของบอท)")
+                reply_text(event.reply_token, f"📋 ผลบั้งไฟ — กำลังส่ง {len(flex)} ชุด...")
+                for _i, _f in enumerate(flex):
+                    push_flex(_chat_id, f"📋 ผลบั้งไฟ {_i+1}/{len(flex)}", _f)
             else:
                 reply_flex(event.reply_token, "สกอค่าย", flex)
         else:
@@ -14038,7 +14043,9 @@ def handle_message(event):
             _score_flex = scoreboard_flex_for_chat(get_current_chat_id(event))
             if isinstance(_score_flex, list):
                 reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
-                _push_scoreboard_if_list(get_current_chat_id(event), _score_flex)
+                _cid = get_current_chat_id(event)
+                for _i, _f in enumerate(_score_flex):
+                    push_flex(_cid, f"📋 ผลบั้งไฟ {_i+1}/{len(_score_flex)}", _f)
             elif _score_flex:
                 reply_two_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"), "📋 ผลบั้งไฟ", _score_flex)
             else:
@@ -14067,7 +14074,9 @@ def handle_message(event):
             _score_flex = scoreboard_flex_for_chat(get_current_chat_id(event))
             if isinstance(_score_flex, list):
                 reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
-                _push_scoreboard_if_list(get_current_chat_id(event), _score_flex)
+                _cid = get_current_chat_id(event)
+                for _i, _f in enumerate(_score_flex):
+                    push_flex(_cid, f"📋 ผลบั้งไฟ {_i+1}/{len(_score_flex)}", _f)
             elif _score_flex:
                 reply_two_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"), "📋 ผลบั้งไฟ", _score_flex)
             else:
