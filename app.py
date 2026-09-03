@@ -3787,10 +3787,6 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
     if not rows:
         return None
 
-    def _trim(name, maxlen=6):
-        name = name or "-"
-        return name if len(name) <= maxlen else name[:maxlen] + ".."
-
     win_count = sum(1 for r in rows if r.get("status_word") == "ชนะ")
     lose_count = sum(1 for r in rows if r.get("status_word") == "แพ้")
     jow_count = sum(1 for r in rows if r.get("status_word") == "จาว")
@@ -3817,7 +3813,7 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
                     "paddingTop": "6px", "paddingBottom": "6px",
                     "contents": [
                         {"type": "text", "text": f"{idx}.", "size": "xs", "color": "#334155", "flex": 2},
-                        {"type": "text", "text": _trim(row.get("camp_name")), "size": "xs", "color": "#0F172A", "flex": 5},
+                        {"type": "text", "text": row.get("camp_name") or "-", "size": "xs", "color": "#0F172A", "flex": 5, "wrap": False, "maxLines": 1},
                         {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "align": "center", "color": "#475569", "flex": 4},
                         {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons', '')}", "size": "xs", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3},
                     ],
