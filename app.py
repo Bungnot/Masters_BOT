@@ -3779,8 +3779,10 @@ def scoreboard_rows_for_chat(chat_id: str = None):
     return rows
 
 
-def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
-    """Flex สรุปสกอค่าย: carousel 3 bubble เลื่อนซ้าย-ขวาได้ ค่ายล่าสุดอยู่ท้ายสุด"""
+def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 120):
+    """Flex สกอค่าย: 25 rows/bubble, 4 bubbles/carousel (~47KB) เลื่อนขวาได้
+    ถ้า >100 rows → 2 carousel push แยก (LINE 50KB limit)
+    """
     rows = scoreboard_rows_for_chat(chat_id)
     if not rows:
         return None
@@ -3789,105 +3791,76 @@ def scoreboard_flex_for_chat(chat_id: str = None, limit: int = 30):
     lose_count = sum(1 for r in rows if r.get("status_word") == "แพ้")
     jow_count = sum(1 for r in rows if r.get("status_word") == "จาว")
     today_text = datetime.now(tz=_TZ_THAI).strftime("%d/%m/%Y")
+    total = len(rows[:limit])
+    summary_text = f"✅{win_count} ❌{lose_count} ⛔{jow_count}  รวม {total} ค่าย"
 
-    def _header_row():
-        return {
-            "type": "box",
-            "layout": "horizontal",
-            "backgroundColor": "#F3F4F6",
-            "paddingAll": "6px",
-            "contents": [
-                {"type": "text", "text": "#", "size": "xs", "weight": "bold", "color": "#475569", "flex": 1},
-                {"type": "text", "text": "ชื่อค่าย", "size": "xs", "weight": "bold", "color": "#475569", "flex": 5},
-                {"type": "text", "text": "ราคาช่าง", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 3},
-                {"type": "text", "text": "ผล", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 3},
-            ],
-        }
-
-    def _data_rows(page_rows, start_idx):
+    def _make_bubble(page_rows, start_idx, p_no, total_pages):
         items = []
         for idx, row in enumerate(page_rows, start=start_idx):
-            items.extend([
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "paddingTop": "7px",
-                    "paddingBottom": "7px",
-                    "contents": [
-                        {"type": "text", "text": f"{idx}.", "size": "xs", "weight": "bold", "color": "#334155", "flex": 1},
-                        {"type": "text", "text": row.get("camp_name") or "-", "size": "xs", "weight": "bold", "wrap": True, "color": "#0F172A", "flex": 5},
-                        {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "weight": "bold", "align": "end", "color": "#0F172A", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
-                        {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons')}", "size": "xs", "weight": "bold", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
-                    ],
-                },
-                {"type": "separator", "color": "#E5E7EB"},
-            ])
-        return items
-
-    def _make_bubble(page_rows, start_idx, page_no, total_pages, total_rows):
-        table_contents = [_header_row()] + _data_rows(page_rows, start_idx)
+            items.append({
+                "type": "box",
+                "layout": "horizontal",
+                "paddingTop": "3px",
+                "paddingBottom": "3px",
+                "contents": [
+                    {"type": "text", "text": f"{idx}", "size": "xxs", "color": "#94A3B8", "flex": 1},
+                    {"type": "text", "text": row.get("camp_name") or "-", "size": "xxs", "color": "#0F172A", "flex": 5, "wrap": True},
+                    {"type": "text", "text": row.get("price_text") or "-", "size": "xxs", "align": "end", "color": "#475569", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                    {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons')}", "size": "xxs", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                ],
+            })
+        page_label = f"📋 {p_no}/{total_pages}" if total_pages > 1 else "📋 ผลบั้งไฟ"
         return {
             "type": "bubble",
             "size": "giga",
             "body": {
                 "type": "box",
                 "layout": "vertical",
-                "paddingAll": "10px",
+                "paddingAll": "6px",
                 "backgroundColor": "#FFFFFF",
                 "contents": [
-                    {
-                        "type": "text",
-                        "text": "📋 ผลบั้งไฟ 📋",
-                        "size": "lg",
-                        "weight": "bold",
-                        "align": "center",
-                        "color": "#0F172A",
-                    },
-                    {
-                        "type": "text",
-                        "text": f"🗓️ วันที่ {today_text}  |  หน้า {page_no}/{total_pages}",
-                        "size": "xs",
-                        "align": "center",
-                        "color": "#64748B",
-                        "margin": "xs",
-                    },
-                    {
-                        "type": "text",
-                        "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}   รวม {total_rows} ค่าย",
-                        "size": "sm",
-                        "weight": "bold",
-                        "align": "center",
-                        "color": "#111827",
-                        "margin": "md",
-                        "wrap": True,
-                    },
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "margin": "md",
-                        "contents": table_contents,
-                    },
+                    {"type": "text", "text": page_label, "size": "sm", "weight": "bold", "align": "center", "color": "#0F172A"},
+                    {"type": "text", "text": f"🗓️ {today_text}  {summary_text}", "size": "xxs", "align": "center", "color": "#64748B", "margin": "xs", "wrap": True},
+                    {"type": "box", "layout": "vertical", "margin": "xs", "contents": [
+                        # header row
+                        {"type": "box", "layout": "horizontal", "paddingBottom": "3px", "contents": [
+                            {"type": "text", "text": "#", "size": "xxs", "weight": "bold", "color": "#64748B", "flex": 1},
+                            {"type": "text", "text": "ชื่อค่าย", "size": "xxs", "weight": "bold", "color": "#64748B", "flex": 5},
+                            {"type": "text", "text": "ช่าง", "size": "xxs", "weight": "bold", "align": "end", "color": "#64748B", "flex": 3},
+                            {"type": "text", "text": "ผล", "size": "xxs", "weight": "bold", "align": "end", "color": "#64748B", "flex": 3},
+                        ]},
+                        {"type": "separator", "color": "#E2E8F0"},
+                    ] + items},
                 ],
             },
         }
 
-    # ถ้าน้อยกว่า 40 ค่าย — bubble เดียวพอ ไม่ต้องแบ่งหน้า
-    total = len(rows[:limit])
-    per_page = 40
+    per_page = 25
+    bubbles_per_carousel = 4
 
     if total <= per_page:
-        return _make_bubble(rows[:total], 1, 1, 1, total)
+        return _make_bubble(rows[:total], 1, 1, 1)
 
-    # ถ้า 40+ ค่าย แบ่งหน้าละ 40 รายการ เลื่อนขวาได้
-    pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
-    total_pages = len(pages)
-    bubbles = []
+    all_pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
+    total_pages = len(all_pages)
+    all_bubbles = []
     start = 1
-    for p_no, page_rows in enumerate(pages, start=1):
-        bubbles.append(_make_bubble(page_rows, start, p_no, total_pages, total))
+    for p_no, page_rows in enumerate(all_pages, start=1):
+        all_bubbles.append(_make_bubble(page_rows, start, p_no, total_pages))
         start += len(page_rows)
 
-    return {"type": "carousel", "contents": bubbles}
+    if len(all_bubbles) == 1:
+        return all_bubbles[0]
+
+    carousels = []
+    for i in range(0, len(all_bubbles), bubbles_per_carousel):
+        chunk = all_bubbles[i:i+bubbles_per_carousel]
+        if len(chunk) == 1:
+            carousels.append(chunk[0])
+        else:
+            carousels.append({"type": "carousel", "contents": chunk})
+
+    return carousels[0] if len(carousels) == 1 else carousels
 
 
 def scoreboard_empty_text(chat_id: str = None) -> str:
@@ -6342,6 +6315,15 @@ def reply_text_and_flex(reply_token, text, alt_text, flex_dict, quote_token=None
         ],
     }
     return _post_line_api(LINE_API_REPLY_URL, payload, LINE_REPLY_TIMEOUT_SECONDS, "REPLY TEXT+FLEX")
+
+
+def _push_scoreboard_if_list(chat_id, score_flex):
+    """ถ้า scoreboard เป็น list (หลาย carousel) ให้ push แยกแต่ละอัน"""
+    if isinstance(score_flex, list):
+        for i, flex in enumerate(score_flex):
+            push_flex_async(chat_id, f"📋 ผลบั้งไฟ ({i+1}/{len(score_flex)})", flex)
+        return True
+    return False
 
 
 def reply_two_flex(reply_token, alt1, flex1, alt2, flex2):
@@ -13446,7 +13428,12 @@ def handle_message(event):
     if is_scoreboard_command(text) and not (is_private_chat(event) and score_clean == "รายการ"):
         flex = scoreboard_flex_for_chat(get_current_chat_id(event))
         if flex:
-            reply_flex(event.reply_token, "สกอค่าย", flex)
+            if isinstance(flex, list):
+                # หลาย carousel — push ทุกอัน reply แจ้งสั้นๆ
+                _push_scoreboard_if_list(get_current_chat_id(event), flex)
+                reply_text(event.reply_token, f"📋 ส่งสกอ {len(flex)} ชุดแล้ว (เลื่อนดูใน DM ของบอท)")
+            else:
+                reply_flex(event.reply_token, "สกอค่าย", flex)
         else:
             reply_text(event.reply_token, scoreboard_empty_text(get_current_chat_id(event)))
         return
@@ -14111,7 +14098,10 @@ def handle_message(event):
         msg = handle_special_result_with_double_confirm(special_result)
         if is_result_flex_reply_payload(msg):
             _score_flex = scoreboard_flex_for_chat(get_current_chat_id(event))
-            if _score_flex:
+            if isinstance(_score_flex, list):
+                reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
+                _push_scoreboard_if_list(get_current_chat_id(event), _score_flex)
+            elif _score_flex:
                 reply_two_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"), "📋 ผลบั้งไฟ", _score_flex)
             else:
                 reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
@@ -14137,7 +14127,10 @@ def handle_message(event):
         msg = handle_result_with_double_confirm(result_value)
         if is_result_flex_reply_payload(msg):
             _score_flex = scoreboard_flex_for_chat(get_current_chat_id(event))
-            if _score_flex:
+            if isinstance(_score_flex, list):
+                reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
+                _push_scoreboard_if_list(get_current_chat_id(event), _score_flex)
+            elif _score_flex:
                 reply_two_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"), "📋 ผลบั้งไฟ", _score_flex)
             else:
                 reply_flex(event.reply_token, msg.get("alt_text"), msg.get("flex"))
