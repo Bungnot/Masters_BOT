@@ -3780,11 +3780,16 @@ def scoreboard_rows_for_chat(chat_id: str = None):
 
 
 def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
-    """แบบสวย xs font — 15 rows/bubble, 4 bubble/carousel (~45KB) เลื่อนขวาได้
+    """แบบสวย xs font — 15 rows/bubble, 4 bubble/carousel (~40KB) เลื่อนขวาได้
+    ชื่อค่ายตัดที่ 7 ตัวอักษร, ลำดับ flex=2 รองรับ 3 หลัก
     120 รายการ = 8 bubble = 2 carousel (reply + push)
     """
     if not rows:
         return None
+
+    def _trim(name, maxlen=7):
+        name = name or "-"
+        return name if len(name) <= maxlen else name[:maxlen] + ".."
 
     win_count = sum(1 for r in rows if r.get("status_word") == "ชนะ")
     lose_count = sum(1 for r in rows if r.get("status_word") == "แพ้")
@@ -3798,9 +3803,9 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
                 "type": "box", "layout": "horizontal",
                 "backgroundColor": "#F3F4F6", "paddingAll": "6px",
                 "contents": [
-                    {"type": "text", "text": "#", "size": "xs", "weight": "bold", "color": "#475569", "flex": 1},
-                    {"type": "text", "text": "ชื่อค่าย", "size": "xs", "weight": "bold", "color": "#475569", "flex": 5},
-                    {"type": "text", "text": "ราคาช่าง", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 3},
+                    {"type": "text", "text": "#", "size": "xs", "weight": "bold", "color": "#475569", "flex": 2},
+                    {"type": "text", "text": "ชื่อค่าย", "size": "xs", "weight": "bold", "color": "#475569", "flex": 6},
+                    {"type": "text", "text": "ราคาช่าง", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 4},
                     {"type": "text", "text": "ผล", "size": "xs", "weight": "bold", "align": "end", "color": "#475569", "flex": 3},
                 ],
             }
@@ -3809,24 +3814,23 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
             table_contents.extend([
                 {
                     "type": "box", "layout": "horizontal",
-                    "paddingTop": "7px", "paddingBottom": "7px",
+                    "paddingTop": "6px", "paddingBottom": "6px",
                     "contents": [
-                        {"type": "text", "text": f"{idx}.", "size": "xs", "weight": "bold", "color": "#334155", "flex": 1},
-                        {"type": "text", "text": row.get("camp_name") or "-", "size": "xs", "weight": "bold", "color": "#0F172A", "flex": 5},
-                        {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "weight": "bold", "align": "end", "color": "#0F172A", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
-                        {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons', '')}", "size": "xs", "weight": "bold", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                        {"type": "text", "text": f"{idx}.", "size": "xs", "color": "#334155", "flex": 2},
+                        {"type": "text", "text": _trim(row.get("camp_name")), "size": "xs", "color": "#0F172A", "flex": 6},
+                        {"type": "text", "text": row.get("price_text") or "-", "size": "xs", "align": "end", "color": "#475569", "flex": 4, "adjustMode": "shrink-to-fit", "maxLines": 1},
+                        {"type": "text", "text": f"{row.get('result_text')} {row.get('status_icons', '')}", "size": "xs", "align": "end", "color": row.get("status_color") or "#111827", "flex": 3, "adjustMode": "shrink-to-fit", "maxLines": 1},
                     ],
                 },
                 {"type": "separator", "color": "#E5E7EB"},
             ])
-        page_label = f"หน้า {p_no}/{total_pages}" if total_pages > 1 else f"วันที่ {today_text}"
         return {
             "type": "bubble", "size": "giga",
             "body": {
                 "type": "box", "layout": "vertical", "paddingAll": "10px", "backgroundColor": "#FFFFFF",
                 "contents": [
                     {"type": "text", "text": "📋 ผลบั้งไฟ 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
-                    {"type": "text", "text": f"🗓️ {today_text}  |  {page_label}", "size": "xs", "align": "center", "color": "#64748B", "margin": "xs"},
+                    {"type": "text", "text": f"🗓️ {today_text}  |  หน้า {p_no}/{total_pages}", "size": "xs", "align": "center", "color": "#64748B", "margin": "xs"},
                     {"type": "text", "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}   รวม {total} ค่าย", "size": "sm", "weight": "bold", "align": "center", "color": "#111827", "margin": "md", "wrap": True},
                     {"type": "box", "layout": "vertical", "margin": "md", "contents": table_contents},
                 ],
@@ -3834,7 +3838,7 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
         }
 
     per_page = 15
-    bubbles_per_carousel = 4  # 4 × ~11KB = ~44KB ✅
+    bubbles_per_carousel = 4  # 4 × ~10KB = ~40KB ✅
     all_pages = [rows[i:i+per_page] for i in range(0, total, per_page)]
     total_pages = len(all_pages)
 
