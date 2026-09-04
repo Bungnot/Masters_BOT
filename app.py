@@ -4674,22 +4674,25 @@ def call_easyslip_api(image_bytes: bytes):
 
     # V2 endpoint และ header ใหม่
     api_url = "https://api.easyslip.com/v2/verify/bank"
-    headers = {"Authorization": f"Bearer {EASYSLIP_API_KEY}"}
 
     attempts = max(1, int(EASYSLIP_API_RETRIES or 1))
     last_status = None
     last_data = None
 
+    # V2 ใช้ JSON body + base64 image (ไม่ใช่ multipart/form-data แบบ V1)
+    import base64 as _base64
+    image_b64 = _base64.b64encode(image_bytes).decode("utf-8")
+
     for attempt in range(1, attempts + 1):
         try:
-            # V2 ใช้ field ชื่อ "image" (ไม่ใช่ "file" แบบ V1)
-            files = {"image": ("slip.jpg", image_bytes, "image/jpeg")}
-            form_data = {"checkDuplicate": "true"}
+            headers = {
+                "Authorization": f"Bearer {EASYSLIP_API_KEY}",
+                "Content-Type": "application/json",
+            }
             response = requests.post(
                 api_url,
                 headers=headers,
-                files=files,
-                data=form_data,
+                json={"image": image_b64},
                 timeout=(EASYSLIP_CONNECT_TIMEOUT_SECONDS, EASYSLIP_TIMEOUT_SECONDS),
             )
             last_status = response.status_code
