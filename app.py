@@ -12971,6 +12971,8 @@ def is_backoffice_relevant_text(text: str, user_id: str = None) -> bool:
         return True
     if is_admin_list_command(raw):
         return True
+    if is_clear_admin_command(raw):
+        return True
     if is_credit_check_mention_command(raw):
         return True
     if upper in {"UIDLIST", "CALL", "CK", "CR"} or clean.upper() in {"CKรวม", "CKALL"}:
