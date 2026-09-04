@@ -2654,7 +2654,7 @@ SINGLE_AUTO_TOPUP_RECEIVER = {
 # ปรับใน .env ได้ เช่น BANK_ACCOUNT_COOLDOWN_SECONDS=10
 BANK_ACCOUNT_COOLDOWN_SECONDS = int(os.getenv("BANK_ACCOUNT_COOLDOWN_SECONDS", "10"))
 BANK_ACCOUNT_COOLDOWN_CACHE = {}
-BANK_BACKOFFICE_URL = os.getenv("BANK_BACKOFFICE_URL", "https://page.line.me/901qfixd").strip() or "https://page.line.me/901qfixd"
+BANK_BACKOFFICE_URL = os.getenv("BANK_BACKOFFICE_URL", "https://page.line.me/942ngdge").strip() or "https://page.line.me/942ngdge"
 
 
 def is_bank_account_request(text: str) -> bool:
@@ -2727,12 +2727,12 @@ def bank_account_backoffice_flex():
 def bank_account_6_accounts_text() -> str:
     """ข้อความบัญชีรับฝาก สำหรับแชทส่วนตัว 1-1"""
     return (
-        "📌💎บั้งไฟเหล่าเซียน💯💵\n"
+        "📌💎บั้งไฟอีสาน OG💯💵\n"
         "━━━━━━━━━━━━━━\n\n"
         "🏦 บัญชีรับฝากเงิน\n\n"
-        "─── บัญชีที่ 1 ───\n"
-        "🟢 ธนาคาร  : กสิกรไทย\n"
-        "🔢 เลขบัญชี : 074-8-44132-8\n"
+        "─── บัญชีที่  ───\n"
+        "🟣 ธนาคาร  : KKP เกียรตินาคิน\n"
+        "🔢 เลขบัญชี : 2062416164\n"
         "👤 ชื่อบัญชี : กิตติเชษฐ์ บุญอินทร์\n\n"
         "━━━━━━━━━━━━━━\n"
         "⚠️ เพื่อป้องกันมิจฉาชีพ\n"
@@ -3032,7 +3032,7 @@ def is_rules_request(text: str) -> bool:
     return clean in {"กต", "กติกา"}
 
 
-RULES_IMAGE_URL = "https://img2.pic.in.th/b6b4bb4c-aaef-4391-b1e7-a1cea2ffd5fa.png"
+RULES_IMAGE_URL = "https://img2.pic.in.th/b6b4bb4c-aaef-4391-b1e7-กกกกกก.png"
 
 
 def rules_flex() -> dict:
