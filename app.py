@@ -3663,7 +3663,7 @@ def is_result_flex_reply_payload(value) -> bool:
 def is_scoreboard_command(text: str) -> bool:
     """คำสั่งดูสกอ/รายการผลรวมหลังแอดมินแจ้งผลแล้ว"""
     clean = re.sub(r"\s+", "", (text or "").strip()).lower()
-    return clean in {"สกอ", "สกอร์", "score", "scores", "รายการ"}
+    return clean in {"สกอ", "สกอร์", "score", "scores"}
 
 
 def scoreboard_status_from_round(st: dict) -> dict:
@@ -7831,93 +7831,104 @@ def camp_cancel_notify_flex(match, camp_name: str, refund_amount: int):
         "header": {
             "type": "box",
             "layout": "vertical",
-            "backgroundColor": "#EF4444",
-            "paddingAll": "16px",
+            "backgroundColor": "#F59E0B",
+            "paddingAll": "14px",
             "contents": [
                 {
                     "type": "text",
-                    "text": "✕  ยกเลิกค่าย",
+                    "text": "📋 ยกเลิกค่ายนี้",
                     "weight": "bold",
-                    "size": "lg",
+                    "size": "md",
                     "color": "#FFFFFF",
-                },
-                {
-                    "type": "text",
-                    "text": camp_name,
-                    "size": "sm",
-                    "color": "#FFCCCC",
-                    "margin": "xs",
                 },
             ],
         },
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
-            "paddingAll": "18px",
+            "paddingAll": "16px",
+            "spacing": "sm",
             "contents": [
                 {
                     "type": "text",
-                    "text": f"Order #{order_no}",
+                    "text": "คืนเครดิต",
+                    "size": "sm",
                     "align": "center",
                     "color": "#999999",
-                    "size": "sm",
                 },
                 {
                     "type": "text",
-                    "text": f"คืนเครดิต {refund_amount:,} บาท (ยอดของคุณ)",
-                    "align": "center",
+                    "text": f"{refund_amount:,} บาท",
+                    "size": "xxl",
                     "weight": "bold",
-                    "size": "xl",
-                    "color": "#EF4444",
+                    "align": "center",
+                    "color": "#F59E0B",
                 },
-                {
-                    "type": "separator",
-                    "margin": "md",
-                },
+                {"type": "separator", "margin": "md"},
                 {
                     "type": "box",
-                    "layout": "vertical",
-                    "spacing": "sm",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": camp_name, "size": "sm", "color": "#6B7280", "wrap": True, "flex": 4},
+                        {"type": "text", "text": f"Order #{order_no}", "size": "sm", "weight": "bold", "align": "end", "color": "#F59E0B", "flex": 2},
+                    ],
+                },
+                {"type": "separator", "margin": "md"},
+                {
+                    "type": "box",
+                    "layout": "horizontal",
                     "margin": "md",
                     "contents": [
                         {
                             "type": "box",
-                            "layout": "horizontal",
+                            "layout": "vertical",
+                            "flex": 5,
                             "contents": [
-                                {"type": "text", "text": "ค่าย", "size": "sm", "color": "#999999", "flex": 2},
-                                {"type": "text", "text": camp_name, "size": "sm", "color": "#111111", "flex": 3, "align": "end"},
+                                {
+                                    "type": "text",
+                                    "text": play_text or "-",
+                                    "size": "sm",
+                                    "weight": "bold",
+                                    "wrap": True,
+                                    "color": "#111111",
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"{price_label}: {price_text or '-'}",
+                                    "size": "xs",
+                                    "color": "#6B7280",
+                                    "wrap": True,
+                                    "margin": "xs",
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "แอดมินยกเลิกค่ายนี้ เครดิตถูกคืนให้คุณเรียบร้อยแล้ว",
+                                    "size": "xs",
+                                    "color": "#EF4444",
+                                    "wrap": True,
+                                    "margin": "xs",
+                                },
                             ],
                         },
                         {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "contents": [
-                                {"type": "text", "text": "รายการ", "size": "sm", "color": "#999999", "flex": 2},
-                                {"type": "text", "text": play_text or "-", "size": "sm", "color": "#111111", "flex": 3, "align": "end", "wrap": True},
-                            ],
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "contents": [
-                                {"type": "text", "text": price_label, "size": "sm", "color": "#999999", "flex": 2},
-                                {"type": "text", "text": price_text or "-", "size": "sm", "color": "#111111", "flex": 3, "align": "end"},
-                            ],
+                            "type": "text",
+                            "text": money_text(refund_amount),
+                            "size": "sm",
+                            "weight": "bold",
+                            "align": "end",
+                            "color": "#F59E0B",
+                            "flex": 2,
                         },
                     ],
                 },
-                {
-                    "type": "separator",
-                    "margin": "md",
-                },
+                {"type": "separator", "margin": "md"},
                 {
                     "type": "text",
-                    "text": "แอดมินยกเลิกค่ายนี้\nเครดิตถูกคืนให้คุณเรียบร้อยแล้ว",
-                    "size": "sm",
-                    "color": "#666666",
-                    "wrap": True,
+                    "text": "เครดิตคืนให้อัตโนมัติ ไม่ต้องดำเนินการใดเพิ่มเติม",
+                    "size": "xs",
                     "align": "center",
+                    "color": "#B3B3B3",
+                    "wrap": True,
                     "margin": "md",
                 },
             ],
@@ -13022,7 +13033,7 @@ def should_process_text_message(event, text: str) -> bool:
             or is_bank_account_request(raw)
             or is_withdrawal_command(raw)
             or is_scoreboard_command(raw)
-            or raw.replace(" ", "") in {"รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}
+            or raw.replace(" ", "") in {"รายการ", "รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}
         ):
             return True
 
@@ -13532,7 +13543,7 @@ def handle_message(event):
         return
 
     # รายการเล่น — แสดงค่ายที่เปิดอยู่ตอนนี้ (ใช้ได้ในกลุ่ม)
-    if text.replace(" ", "") in {"รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}:
+    if text.replace(" ", "") in {"รายการ", "รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}:
         _open_lines = []
         for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
             if not isinstance(_st, dict):
