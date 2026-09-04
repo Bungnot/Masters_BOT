@@ -107,7 +107,7 @@ EASYSLIP_API_RETRY_DELAY_SECONDS = float(os.getenv("EASYSLIP_API_RETRY_DELAY_SEC
 EASYSLIP_DEBUG_MODE = os.getenv("EASYSLIP_DEBUG_MODE", "1") == "1"
 
 # รายชื่อบัญชีที่อนุญาตให้เติมออโต้ (format: account_no|name_th|name_en|bank;...)
-AUTO_TOPUP_ACCOUNTS_STR = os.getenv("AUTO_TOPUP_ACCOUNTS", "3360616359|จารุณี สว่างวงษ์|Jarunee savangvong|กรุงไทย;1313942097|บุษบารัตน์ สว่างวงษ์|Butsabarat sahwangwong|กสิกรไทย;020351383037|บุษบารัตน์ สว่างวงษ์|Butsabarat sahwangwong|ออมสิน;020218276333|ธวัชชัย บุญศรี|Tawatchai Bunsri|ออมสิน;0868055820|ธวัชชัย บุญศรี|Tawatchai Bunsri|กสิกรไทย").strip()
+AUTO_TOPUP_ACCOUNTS_STR = os.getenv("AUTO_TOPUP_ACCOUNTS", "0748441328|กิตติเชษฐ์ บุญอินทร์|Kittichest Boonin|กสิกรไทย").strip()
 AUTO_TOPUP_ACCOUNTS_LIST = []
 if AUTO_TOPUP_ACCOUNTS_STR:
     for acc_str in AUTO_TOPUP_ACCOUNTS_STR.split(";"):
@@ -2989,7 +2989,8 @@ def admin_command_help_text() -> str:
         "- C @ชื่อไลน์ = เช็กชื่อ LINE / ID สมาชิก / ยอดเงินของคนที่แท็ก\n"
         "- CALL = ดูรายชื่อลูกค้าที่ระบบรู้จัก\n"
         "- เพิ่มแอดมิน @ชื่อไลน์ = เพิ่มแอดมินจากการ mention\n"
-        "- List / เช็คแอดมิน = ดูรายชื่อแอดมินทั้งหมดในระบบ\n\n"
+        "- List / เช็คแอดมิน = ดูรายชื่อแอดมินทั้งหมดในระบบ\n"
+        "- ล้างแอดมิน = ลบแอดมินทั้งหมดใน admins.json (เหลือแค่ใน ENV)\n\n"
         "💰 เครดิต/กำไร\n"
         "- $+ เลขสมาชิก จำนวนเงิน = เพิ่มเครดิต เช่น $+ 1 1000\n"
         "- $- เลขสมาชิก จำนวนเงิน = หักเครดิต เช่น $- 1 1000\n"
@@ -11758,6 +11759,44 @@ def extract_mentioned_user_ids(event):
     return user_ids
 
 
+def is_clear_admin_command(text: str) -> bool:
+    """ตรวจคำสั่ง ล้างแอดมิน เพื่อลบแอดมินทั้งหมดใน admins.json (เหลือแค่ ENV)"""
+    clean = re.sub(r"\s+", "", (text or "").strip()).lower()
+    return clean in {
+        "ล้างแอดมิน",
+        "ลบแอดมิน",
+        "clearadmin",
+        "clearadmins",
+        "resetadmin",
+        "resetadmins",
+    }
+
+
+def clear_dynamic_admins(cleared_by_id: str) -> str:
+    """ล้างแอดมินทั้งหมดใน admins.json เหลือแค่ที่ตั้งไว้ใน .env"""
+    admins = DYNAMIC_ADMINS.get("admins", {}) if isinstance(DYNAMIC_ADMINS, dict) else {}
+    count = len(admins) if isinstance(admins, dict) else 0
+
+    if count == 0:
+        return (
+            "ℹ️ ไม่มีแอดมินใน admins.json\n"
+            "แอดมินที่ตั้งไว้ใน .env ยังคงอยู่ตามเดิม"
+        )
+
+    DYNAMIC_ADMINS["admins"] = {}
+    DYNAMIC_ADMINS["updated_at"] = datetime.now().isoformat()
+    save_admin_db()
+
+    cleared_by_name = user_display_name(cleared_by_id)
+    return (
+        f"✅ ล้างแอดมินเรียบร้อย\n\n"
+        f"ลบออก {count} คน จาก admins.json\n"
+        f"ล้างโดย: {cleared_by_name}\n\n"
+        f"แอดมินที่ตั้งไว้ใน .env ยังคงมีสิทธิ์ตามเดิม\n"
+        f"ใช้คำสั่ง List เพื่อดูรายชื่อแอดมินที่เหลือ"
+    )
+
+
 def add_admins_from_mentions(event, added_by_id: str):
     """เพิ่มแอดมินจากคนที่ถูกแท็กในข้อความ เพิ่มแอดมิน @ชื่อไลน์"""
     mentioned_user_ids = extract_mentioned_user_ids(event)
@@ -13224,6 +13263,14 @@ def handle_message(event):
             return
 
         reply_text(event.reply_token, admin_list_report())
+        return
+
+    if is_clear_admin_command(text):
+        if not can_use_strict_backoffice_command(event):
+            reply_text(event.reply_token, strict_backoffice_only_text("ล้างแอดมิน"))
+            return
+
+        reply_text(event.reply_token, clear_dynamic_admins(user_id))
         return
 
     if is_credit_check_mention_command(text):
