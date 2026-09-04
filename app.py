@@ -54,7 +54,7 @@ ADMIN_USER_IDS = set(
 )
 # กลุ่มหลังบ้านที่อนุญาตให้ใช้คำสั่งระบบ เช่น CK / ยอดกำไร / $+ $- / ล้างออเดอร์
 # ใส่ BACKOFFICE_GROUP_ID ใน .env ได้เหมือนเดิม และมีค่า default ตามกลุ่มหลังบ้านที่กำหนดไว้
-DEFAULT_BACKOFFICE_GROUP_ID = "Cb890e7385cd34ac7b0d910bff7749540"
+DEFAULT_BACKOFFICE_GROUP_ID = "C78ac3ee47fb8bc3127a1ef1e051b69e1"
 BACKOFFICE_GROUP_ID = os.getenv("BACKOFFICE_GROUP_ID", "").strip()
 BACKOFFICE_GROUP_IDS = set(
     x.strip() for x in BACKOFFICE_GROUP_ID.split(",") if x.strip()
