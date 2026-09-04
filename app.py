@@ -7936,6 +7936,132 @@ def camp_cancel_notify_flex(match, camp_name: str, refund_amount: int):
     }
 
 
+def camp_cancel_multi_flex(items: list, camp_name: str):
+    """FLEX รวมหลายรายการยกเลิกค่ายใน bubble เดียว ต่อลงมาเรื่อยๆ"""
+    total_refund = sum(amt for _, amt in items)
+    row_contents = []
+
+    for match, refund_amount in items:
+        play_text = format_match_play_text(match)
+        price_label = "ราคาเล่น" if match.get("is_custom_price") else "ราคาช่าง"
+        price_text = format_match_price_text_for_flex(match)
+        order_no = match.get("order_no", "-")
+
+        row_contents.extend([
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "margin": "md",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "flex": 5,
+                        "contents": [
+                            {
+                                "type": "text",
+                                "text": play_text or "-",
+                                "size": "sm",
+                                "weight": "bold",
+                                "wrap": True,
+                                "color": "#111111",
+                            },
+                            {
+                                "type": "text",
+                                "text": f"{price_label}: {price_text or '-'}",
+                                "size": "xs",
+                                "color": "#6B7280",
+                                "wrap": True,
+                                "margin": "xs",
+                            },
+                            {
+                                "type": "text",
+                                "text": f"Order #{order_no}",
+                                "size": "xs",
+                                "color": "#EF4444",
+                                "wrap": True,
+                                "margin": "xs",
+                            },
+                        ],
+                    },
+                    {
+                        "type": "text",
+                        "text": money_text(refund_amount),
+                        "size": "sm",
+                        "weight": "bold",
+                        "align": "end",
+                        "color": "#F59E0B",
+                        "flex": 2,
+                    },
+                ],
+            },
+            {"type": "separator", "margin": "md"},
+        ])
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#F59E0B",
+            "paddingAll": "14px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "📋 ยกเลิกค่ายนี้",
+                    "weight": "bold",
+                    "size": "md",
+                    "color": "#FFFFFF",
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "16px",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "คืนเครดิตรวม",
+                    "size": "sm",
+                    "align": "center",
+                    "color": "#999999",
+                },
+                {
+                    "type": "text",
+                    "text": f"{total_refund:,} บาท",
+                    "size": "xxl",
+                    "weight": "bold",
+                    "align": "center",
+                    "color": "#F59E0B",
+                },
+                {"type": "separator", "margin": "md"},
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": camp_name, "size": "sm", "color": "#6B7280", "wrap": True, "flex": 4},
+                        {"type": "text", "text": f"{len(items)} รายการ", "size": "sm", "weight": "bold", "align": "end", "color": "#F59E0B", "flex": 2},
+                    ],
+                },
+                {"type": "separator", "margin": "md"},
+                *row_contents,
+                {
+                    "type": "text",
+                    "text": "เครดิตคืนให้อัตโนมัติ ไม่ต้องดำเนินการใดเพิ่มเติม",
+                    "size": "xs",
+                    "align": "center",
+                    "color": "#B3B3B3",
+                    "wrap": True,
+                    "margin": "md",
+                },
+            ],
+        },
+    }
+
+
 def cancel_reject_flex(match, rejecter_id):
     rejecter = USERS.get(rejecter_id, {})
     amount = match.get("amount", 0)
@@ -14272,14 +14398,10 @@ def handle_message(event):
                             _flex = camp_cancel_notify_flex(_items[0][0], camp_name, _items[0][1])
                             push_flex(_uid, f"ยกเลิกค่าย {camp_name}", _flex)
                         else:
-                            # หลายรายการ — รวมเป็น carousel
+                            # หลายรายการ — รวมเป็น bubble เดียวต่อลงมา
                             _total_refund = sum(amt for _, amt in _items)
-                            _bubbles = [camp_cancel_notify_flex(m, camp_name, amt) for m, amt in _items]
-                            _carousel = {
-                                "type": "carousel",
-                                "contents": _bubbles,
-                            }
-                            push_flex(_uid, f"ยกเลิกค่าย {camp_name} ({len(_items)} รายการ คืนรวม {_total_refund:,})", _carousel)
+                            _flex = camp_cancel_multi_flex(_items, camp_name)
+                            push_flex(_uid, f"ยกเลิกค่าย {camp_name} ({len(_items)} รายการ คืนรวม {_total_refund:,})", _flex)
                     except Exception as _e:
                         try:
                             _total = sum(amt for _, amt in _items)
