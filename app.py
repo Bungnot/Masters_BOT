@@ -3425,6 +3425,10 @@ def two_digit_unresolved_warning() -> str:
         return ""
     if state_two_digit_start_text(STATE) != "-":
         return ""
+    # ถ้า auto-detect เริ่มต้นได้จากราคากลาง ไม่ต้องบล็อก
+    if STATE.get("base_min") is not None:
+        if auto_detect_two_digit_start(STATE.get("base_min"), STATE.get("base_max")) is not None:
+            return ""
     return (
         "ยังมีแผลเลข 2 ตัวในรอบนี้ แต่ยังไม่ได้แจ้ง เริ่มต้น1/2/3\n"
         "กรุณาแจ้งก่อนสรุปผล เช่น เริ่มต้น3"
@@ -4005,8 +4009,12 @@ def get_match_price_range(match):
     st = get_state_by_round_id(match.get("round_id")) or STATE
 
     if match.get("is_two_digit_price"):
+        _two_digit_start = st.get("two_digit_start")
+        # ถ้ายังไม่มี two_digit_start แต่มีราคากลาง ให้ auto-detect จากราคากลางเลย
+        if _two_digit_start is None and st.get("base_min") is not None:
+            _two_digit_start = auto_detect_two_digit_start(st.get("base_min"), st.get("base_max"))
         return two_digit_tokens_to_price_range(
-            st.get("two_digit_start"),
+            _two_digit_start,
             match.get("two_digit_min_token"),
             match.get("two_digit_max_token"),
             st.get("base_min"),
