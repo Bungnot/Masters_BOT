@@ -13671,17 +13671,20 @@ def handle_message(event):
     # รายการเล่น — แสดงค่ายที่เปิดอยู่ตอนนี้ (ใช้ได้ในกลุ่ม)
     if text.replace(" ", "") in {"รายการ", "รายการเล่น", "ค่ายที่เปิด", "เปิดอยู่"}:
         _open_lines = []
-        for _bn, _st in sorted(ROUNDS.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
-            if not isinstance(_st, dict):
-                continue
-            if _st.get("opened") and _st.get("round_id"):
-                _c = _st.get("camp_name") or "-"
-                _mn = _st.get("base_min")
-                _mx = _st.get("base_max")
-                if _mn is not None and _mx is not None:
-                    _open_lines.append(f"{_c}\nช่าง  {format_price_range_text(_mn, _mx)}")
-                else:
-                    _open_lines.append(f"{_c}\nช่าง  ⛔️")
+        _open_states = [
+            _st for _bn, _st in ROUNDS.items()
+            if isinstance(_st, dict) and _st.get("opened") and _st.get("round_id")
+        ]
+        # เรียงตามเวลาเปิด (เก่าไปใหม่) ค่ายล่าสุดอยู่ท้ายสุด
+        _open_states.sort(key=lambda s: s.get("opened_at_ts") or s.get("opened_at") or "")
+        for _st in _open_states:
+            _c = _st.get("camp_name") or "-"
+            _mn = _st.get("base_min")
+            _mx = _st.get("base_max")
+            if _mn is not None and _mx is not None:
+                _open_lines.append(f"{_c}\nช่าง  {format_price_range_text(_mn, _mx)}")
+            else:
+                _open_lines.append(f"{_c}\nช่าง  ⛔️")
 
 
         if _open_lines:
