@@ -10454,8 +10454,11 @@ def settle_round(result_value: int):
     if STATE.get("settled"):
         return f"รอบนี้แจ้งผลไปแล้ว ผลเดิมคือ {STATE.get('result')}"
 
+    _camp_name = STATE.get("camp_name") or "-"
     if STATE.get("opened"):
-        return f"❌ ค่าย {camp} ยังเปิดรับอยู่\nกรุณาปิดก่อนแจ้งผล: ปิด {camp}"
+        return f"❌ ค่าย {_camp_name} ยังเปิดรับอยู่\nกรุณาปิดก่อนแจ้งผล: ปิด {_camp_name}"
+
+
 
 
 
@@ -10758,8 +10761,9 @@ def handle_special_result_with_double_confirm(reason: str):
     if STATE.get("settled"):
         return f"รอบนี้แจ้งผลไปแล้ว ผลเดิมคือ {STATE.get('result')}"
 
+    _camp_name_jow = STATE.get("camp_name") or "-"
     if STATE.get("opened"):
-        return f"❌ ค่าย {camp} ยังเปิดรับอยู่\nกรุณาปิดก่อนแจ้งผล: ปิด {camp}"
+        return f"❌ ค่าย {_camp_name_jow} ยังเปิดรับอยู่\nกรุณาปิดก่อนแจ้งผล: ปิด {_camp_name_jow}"
 
 
 
@@ -10793,6 +10797,10 @@ def handle_result_with_double_confirm(result_value: int):
 
     if STATE.get("settled"):
         return f"รอบนี้แจ้งผลไปแล้ว ผลเดิมคือ {STATE.get('result')}"
+
+    _camp_name_dc = STATE.get("camp_name") or "-"
+    if STATE.get("opened"):
+        return f"❌ ค่าย {_camp_name_dc} ยังเปิดรับอยู่\nกรุณาปิดก่อนแจ้งผล: ปิด {_camp_name_dc}"
 
     unresolved = two_digit_unresolved_warning()
     if unresolved:
