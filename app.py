@@ -5653,7 +5653,7 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
             "backgroundColor": "#16A34A",
             "paddingAll": "12px", "spacing": "sm",
             "contents": [
-                {"type": "text", "text": "✅  ตรวจสลิปสำเร็จ",
+                {"type": "text", "text": "✅ สำเร็จ",
                  "weight": "bold", "size": "sm", "color": "#FFFFFF"},
                 {"type": "text", "text": f"+{credit_to_add:,} เครดิต",
                  "size": "sm", "color": "#FFFFFF", "align": "end",
@@ -5670,7 +5670,7 @@ def slip_success_flex(target, amount, credit_to_add, old_credit, slip_ref, slip_
             "paddingAll": "10px", "backgroundColor": "#F9FAFB",
             "contents": [{
                 "type": "text",
-                "text": "เก็บประวัติสลิปแล้ว ระบบจะไม่เติมซ้ำ",
+                "text": "ตรวจสอบผ่านระบบเถ้าแก่น้อย",
                 "size": "xxs", "color": "#9CA3AF", "align": "center",
             }]
         }
