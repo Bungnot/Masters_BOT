@@ -3836,7 +3836,7 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
             "body": {
                 "type": "box", "layout": "vertical", "paddingAll": "10px", "backgroundColor": "#FFFFFF",
                 "contents": [
-                    {"type": "text", "text": "📋 สกอเถ้าแก่น้อย 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
+                    {"type": "text", "text": "📋 ผลเถ้าแก่น้อย 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
                     {"type": "text", "text": f"🗓️ {today_text}  |  หน้า {p_no}/{total_pages}", "size": "xs", "align": "center", "color": "#64748B", "margin": "xs"},
                     {"type": "text", "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}   รวม {total} ค่าย", "size": "sm", "weight": "bold", "align": "center", "color": "#111827", "margin": "md", "wrap": True},
                     {"type": "box", "layout": "vertical", "margin": "md", "contents": table_contents},
@@ -13804,7 +13804,7 @@ def handle_message(event):
             if isinstance(_st, dict) and _st.get("opened") and _st.get("round_id")
         ]
         # เรียงตามเวลาเปิด (เก่าไปใหม่) ค่ายล่าสุดอยู่ท้ายสุด
-        _open_states.sort(key=lambda s: s.get("opened_at_ts") or s.get("opened_at") or "")
+        _open_states.sort(key=lambda s: float(s.get("opened_at_ts") or 0) or 0)
         for _st in _open_states:
             _c = _st.get("camp_name") or "-"
             _mn = _st.get("base_min")
