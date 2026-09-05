@@ -5989,8 +5989,10 @@ def should_silence_slip_reject(reject_type: str = None, message: str = "") -> bo
     return any(k.lower() in msg for k in silent_keywords)
 
 
-def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
-    """ลูกค้าส่งรูปสลิปในแชทส่วนตัวกับ OA -> ตรวจ EasySlip -> เติมเครดิตอัตโนมัติ และตอบกลับเป็น Flex"""
+def auto_topup_credit_from_slip(event, image_bytes: bytes = None, _prefetched_easyslip_data: dict = None):
+    """ลูกค้าส่งรูปสลิปในแชทส่วนตัวกับ OA -> ตรวจ EasySlip -> เติมเครดิตอัตโนมัติ และตอบกลับเป็น Flex
+    _prefetched_easyslip_data: ถ้ามี จะข้าม call_easyslip_api ใหม่ (ใช้ใน auto-retry)
+    """
     if not is_private_chat(event):
         return None
 
@@ -6016,17 +6018,58 @@ def auto_topup_credit_from_slip(event, image_bytes: bytes = None):
     if not is_likely_slip_image(image_bytes):
         return None
 
-    ok, msg, data = call_easyslip_api(image_bytes)
+    # ถ้ามี prefetched data (จาก auto-retry) ให้ข้าม API call
+    if _prefetched_easyslip_data is not None:
+        ok, msg, data = True, "ok", _prefetched_easyslip_data
+    else:
+        ok, msg, data = call_easyslip_api(image_bytes)
 
     if not ok:
-        # Timeout / network error
+        # Timeout / network error → retry อัตโนมัติ background ไม่ให้ลูกค้าต้องส่งซ้ำ
         if isinstance(data, dict):
             debug = data.get("_easyslip_debug", {})
             err_type = debug.get("error_type", "")
             if err_type in ("timeout", "connection_error"):
-                return slip_pending_retry_flex(
-                    "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน ระบบยังไม่เติมเครดิตและยังไม่บันทึกว่าสลิปนี้ถูกใช้แล้ว"
+                # push แจ้งก่อนว่ากำลัง retry
+                push_flex(
+                    user_id,
+                    "กำลังตรวจสลิปใหม่อีกครั้ง",
+                    slip_pending_retry_flex(
+                        "EasySlip ตอบช้าหรือเชื่อมต่อไม่ทัน ระบบกำลังตรวจสลิปใหม่อัตโนมัติ กรุณารอสักครู่"
+                    ),
                 )
+
+                def _auto_retry_job(uid=user_id, img=image_bytes, ev=event):
+                    """retry call_easyslip_api สูงสุด 3 รอบ ห่าง 15/30/60 วินาที"""
+                    delays = [15, 30, 60]
+                    for i, delay in enumerate(delays):
+                        time.sleep(delay)
+                        ok2, msg2, data2 = call_easyslip_api(img)
+                        if ok2:
+                            # ได้ผลแล้ว — ส่งต่อ flow เติมเครดิตโดยใช้ data ที่ได้มา ไม่ยิง API ซ้ำ
+                            result = auto_topup_credit_from_slip(ev, image_bytes=img, _prefetched_easyslip_data=data2)
+                            if isinstance(result, dict):
+                                push_flex(uid, "ผลตรวจสลิป", result)
+                            elif result:
+                                push_text(uid, result)
+                            return
+                        # ยัง timeout → ลอง loop ต่อ
+                        if isinstance(data2, dict):
+                            err2 = data2.get("_easyslip_debug", {}).get("error_type", "")
+                            if err2 not in ("timeout", "connection_error"):
+                                # error จริง (ไม่ใช่ timeout) → หยุด retry แจ้ง error
+                                push_flex(uid, "ผลตรวจสลิป", slip_fail_flex(
+                                    reason=msg2,
+                                    suggestion="ส่งสลิปใหม่อีกครั้ง หรือให้แอดมินตรวจสอบ",
+                                ))
+                                return
+                    # หมด retry ทุกรอบแล้วยังไม่ได้ → แจ้งให้ส่งซ้ำ
+                    push_flex(uid, "ผลตรวจสลิป", slip_pending_retry_flex(
+                        "EasySlip ตอบช้าหลายครั้ง กรุณาส่งสลิปใหม่อีกครั้ง"
+                    ))
+
+                EXECUTOR.submit(_auto_retry_job)
+                return None  # push แจ้งไปแล้วข้างบน ไม่ return flex ซ้ำ
 
         # V2: 404 + SLIP_PENDING = ธ.กรุงเทพยังไม่ sync
         if msg == "slip_not_found" and isinstance(data, dict):
