@@ -14094,29 +14094,62 @@ def handle_message(event):
                 return re.sub(r"\s*\(\d+\)\s*$", "", (t or "").strip())
 
             def _camp_match(camp_name, keyword):
-                """จับชื่อค่ายแบบ substring ลบวรรณยุกต์และ (N) ก่อนเปรียบเทียบ"""
-                # ตัด (N) ออกจากชื่อค่ายก่อน เพื่อให้ 'โด้นำชัย' match 'โด้นำชัย (2)'
-                cs = _strip_dia(normalize_camp_key(_strip_index(camp_name)))
+                """จับชื่อค่ายสำหรับคำสั่งปิด โดยยึดตามลำดับนี้:
+                  1. ถ้าชื่อค่ายมี - ให้จับเฉพาะ suffix หลัง - (exact, ลบวรรณยุกต์)
+                     เช่น 'นุ' match 'นุ่มน้ำขัย-นุ' แต่ไม่ match 'หมู่ยางซุ่ม-ยาง'
+                  2. ถ้าชื่อค่ายไม่มี - ให้ใช้ substring match ตามปกติ (ลบวรรณยุกต์)
+                """
                 ks = _strip_dia(normalize_camp_key(_strip_index(keyword)))
                 if not ks:
                     return False
-                return cs == ks or ks in cs
+                _dash_idx = camp_name.rfind("-")
+                if _dash_idx >= 0:
+                    # ค่ายมี suffix — ยึด suffix เป็นหลัก exact เท่านั้น
+                    _suffix = _strip_dia(normalize_camp_key(camp_name[_dash_idx+1:].strip()))
+                    if _suffix and _suffix == ks:
+                        return True
+                    # รองรับกรณีพิมชื่อเต็มทั้งหมด เช่น ปิด นุ่มน้ำขัย-นุ
+                    cs = _strip_dia(normalize_camp_key(_strip_index(camp_name)))
+                    if cs == ks:
+                        return True
+                    return False
+                else:
+                    # ค่ายไม่มี - fallback substring (ลบวรรณยุกต์, keyword >= 2 ตัว หรือ exact)
+                    cs = _strip_dia(normalize_camp_key(_strip_index(camp_name)))
+                    if cs == ks:
+                        return True
+                    if len(ks) >= 2 and ks in cs:
+                        return True
+                    return False
 
             _matched_camps = [(bn, st) for bn, st in _open_states if _camp_match(st.get("camp_name") or "", _keyword)]
 
             if len(_matched_camps) == 1:
                 _target_bn, _target_st = _matched_camps[0]
             elif len(_matched_camps) > 1:
-                # ถ้า match หลายค่าย ลองหาอันที่ชื่อตรงสุด (หลังตัด (N))
+                # ถ้า match หลายค่าย ลองหาอันที่ชื่อตรงสุดโดยเรียง priority:
+                # 1) suffix หลัง - exact (เช่น keyword=นุ → ค่าย นุ่มน้ำขัย-นุ)
+                # 2) full exact (หลังตัด (N))
                 _strip_kw = re.sub(r"\s*\(\d+\)\s*$", "", _keyword.strip())
-                _exact = [(bn, st) for bn, st in _matched_camps
-                          if re.sub(r"\s*\(\d+\)\s*$", "", (st.get("camp_name") or "").strip()) == _strip_kw]
-                if len(_exact) == 1:
-                    _target_bn, _target_st = _exact[0]
+                _ks_dia = THAI_DIACRITICS_RE.sub("", normalize_camp_key(_strip_kw))
+                # 1) suffix exact
+                _suffix_exact = [
+                    (bn, st) for bn, st in _matched_camps
+                    if "-" in (st.get("camp_name") or "")
+                    and THAI_DIACRITICS_RE.sub("", normalize_camp_key((st.get("camp_name") or "").rsplit("-", 1)[-1].strip())) == _ks_dia
+                ]
+                if len(_suffix_exact) == 1:
+                    _target_bn, _target_st = _suffix_exact[0]
                 else:
-                    # ยังคลุมเครือ — แจ้งให้ระบุชัดขึ้น
-                    _clist = "\n".join(f"- {st.get('camp_name','-')}" for _,st in _matched_camps)
-                    reply_text(event.reply_token, f"⚠️ มีหลายค่ายที่ชื่อคล้ายกัน กรุณาระบุชื่อเต็มที่ต้องการปิด:\n{_clist}")
+                    # 2) full exact
+                    _exact = [(bn, st) for bn, st in _matched_camps
+                              if re.sub(r"\s*\(\d+\)\s*$", "", (st.get("camp_name") or "").strip()) == _strip_kw]
+                    if len(_exact) == 1:
+                        _target_bn, _target_st = _exact[0]
+                    else:
+                        # ยังคลุมเครือ — แจ้งให้ระบุชัดขึ้น
+                        _clist = "\n".join(f"- {st.get('camp_name','-')}" for _,st in _matched_camps)
+                        reply_text(event.reply_token, f"⚠️ มีหลายค่ายที่ชื่อคล้ายกัน กรุณาระบุชื่อเต็มที่ต้องการปิด:\n{_clist}")
                     return
 
             if _target_st is None:
