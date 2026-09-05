@@ -6760,14 +6760,18 @@ def find_camp_in_text(text: str) -> tuple:
 
     def _build_tokens(camp_name: str) -> list:
         """สร้าง token จาก substring ของชื่อค่าย หลังลบวรรณยุกต์
-        ใช้ minimum 1 ตัว เพราะหลังลบวรรณยุกต์ 'นุ' กลายเป็น 'น' (1 ตัว)
+        ใช้ minimum 2 ตัว เพื่อกัน token สั้น 1 ตัวไป match คำทั่วไป
+        เพิ่ม prefix 1 ตัวเฉพาะตัวแรกของแต่ละคำ (กรณีชื่อค่าย 1 ตัวอักษร)
         เรียงยาวก่อนเพื่อจับคำยาวสุด"""
         tokens = set()
         for word in _camp_words(camp_name):
             stripped = _strip_dia(word)
             n = len(stripped)
+            # เพิ่ม prefix 1 ตัวเฉพาะตัวแรกของคำ
+            if stripped and _THAI_CONSONANT_RE.search(stripped[0]):
+                tokens.add(stripped[0])
             for start in range(n):
-                for end in range(start + 1, n + 1):
+                for end in range(start + 2, n + 1):  # minimum length = 2
                     tok = stripped[start:end]
                     if _THAI_CONSONANT_RE.search(tok):
                         tokens.add(tok)
@@ -14482,7 +14486,9 @@ def handle_message(event):
     if _matched_camp == "__ambiguous__":
         _amb_camps = _play_text
         _amb_keyword = _matched_base_no
-        reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น โด้นำ หรือ นุนำ")
+        _camp_examples = [c.lstrip("- ").strip() for c in _amb_camps.splitlines() if c.strip()]
+        _example_hint = " หรือ ".join(_camp_examples[:2]) if _camp_examples else "ชื่อค่ายที่ต้องการ"
+        reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น {_example_hint}")
         return
 
     offer = parse_offer(_offer_text)
@@ -14490,11 +14496,16 @@ def handle_message(event):
     # ถ้ายังไม่เจอ offer ให้ตรวจ ambiguous จากชื่อค่ายล้วนๆ ก่อน
     # กรณี เช่น "ขัย กอย 500" — ขัย match หลายค่าย แต่ กอย ไม่ใช่ alias
     if offer is None and _matched_camp is None:
-        _kw_result = find_camp_keyword_only(text)
-        if _kw_result and len(_kw_result) == 3 and _kw_result[0] == "__ambiguous__":
-            _, _amb_camps, _amb_keyword = _kw_result
-            reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น โด้นำ หรือ นุนำ")
-            return
+        # ถ้าข้อความไม่มี play alias เลย ไม่ต้องตรวจ ambiguous (กัน false positive เช่น "น พร้อมๆ")
+        _has_alias = any(a in text for a in ALL_PLAY_ALIASES + ALL_SPECIAL_PLAY_ALIASES)
+        if _has_alias:
+            _kw_result = find_camp_keyword_only(text)
+            if _kw_result and len(_kw_result) == 3 and _kw_result[0] == "__ambiguous__":
+                _, _amb_camps, _amb_keyword = _kw_result
+                _camp_examples = [c.lstrip("- ").strip() for c in _amb_camps.splitlines() if c.strip()]
+                _example_hint = " หรือ ".join(_camp_examples[:2]) if _camp_examples else "ชื่อค่ายที่ต้องการ"
+                reply_problem(event, f"⚠️ คำว่า \"{_amb_keyword}\" ตรงกับหลายค่าย:\n{_amb_camps}\n\nกรุณาพิมชื่อให้ชัดขึ้น เช่น {_example_hint}")
+                return
 
     # ถ้าจับชื่อค่ายได้แต่ parse ไม่ผ่าน ให้ลอง parse text เดิมทั้งหมดอีกรอบ
     # (กันเคส find_camp_in_text จับผิดทำให้ play text เสีย)
