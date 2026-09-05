@@ -6800,21 +6800,26 @@ def find_camp_in_text(text: str) -> tuple:
                 if _play_parseable(rem):
                     matched_rem = rem
 
-            # 1b) ชื่อค่ายนำหน้าติดกับ alias ไม่มีช่องว่าง เช่น ลูกรักถอย500
-            if matched_rem is None and len(tok) >= 2:
-                if raw_stripped.startswith(tok):
-                    rem_stripped = raw_stripped[len(tok):]
-                    if rem_stripped and _play_parseable(rem_stripped):
-                        # หา offset ใน raw text เดิมโดย map กลับจาก stripped
-                        _raw_offset = 0
-                        _stripped_count = 0
-                        for _ch in raw:
-                            if _stripped_count >= len(tok):
-                                break
-                            _raw_offset += 1
-                            if not _THAI_DIACRITICS_RE.match(_ch):
-                                _stripped_count += 1
-                        matched_rem = raw[_raw_offset:].strip()
+            # 1b) ชื่อค่ายนำหน้าติดกับ alias ไม่มีช่องว่าง เช่น ลูกรักถอย500, นุถอย500
+            # token >= 2 ตัว: อนุญาตทั่วไป
+            # token 1 ตัว: อนุญาตเฉพาะเมื่อ rem ขึ้นต้นด้วย alias โดยตรง (ป้องกัน false positive)
+            if matched_rem is None and raw_stripped.startswith(tok):
+                _rem_after_tok = raw_stripped[len(tok):]
+                _tok_ok = (
+                    len(tok) >= 2
+                    or (len(tok) == 1 and bool(re.match(rf"^({alias_pat})", _rem_after_tok)))
+                )
+                if _tok_ok and _rem_after_tok and _play_parseable(_rem_after_tok):
+                    # หา offset ใน raw text เดิมโดย map กลับจาก stripped
+                    _raw_offset = 0
+                    _stripped_count = 0
+                    for _ch in raw:
+                        if _stripped_count >= len(tok):
+                            break
+                        _raw_offset += 1
+                        if not _THAI_DIACRITICS_RE.match(_ch):
+                            _stripped_count += 1
+                    matched_rem = raw[_raw_offset:].strip()
 
             if matched_rem is None:
                 # 2) ชื่อค่ายกลาง + ช่องว่าง + ตัวเลข
@@ -6833,12 +6838,34 @@ def find_camp_in_text(text: str) -> tuple:
                         matched_rem = rem
 
             if matched_rem is None:
-                # 4) ชื่อค่ายตามหลัง
+                # 4) ชื่อค่ายตามหลัง (มีช่องว่าง) เช่น ชถ500 นุ
                 m = re.match(rf"^(.+?\d+)\s+{pat}\s*$", raw_stripped)
                 if m:
                     rem = m.group(1).strip()
                     if _play_parseable(rem):
                         matched_rem = rem
+
+            if matched_rem is None:
+                # 4b) ชื่อค่ายตามหลังติดกับตัวเลข ไม่มีช่องว่าง เช่น ชถ500นุ / ล500เมฆ
+                m = re.match(rf"^(.+?\d+){pat}\s*$", raw_stripped)
+                if m:
+                    rem_stripped = m.group(1).strip()
+                    if rem_stripped and _play_parseable(rem_stripped):
+                        # map offset กลับจาก stripped → raw เพื่อตัดชื่อค่ายท้ายออก
+                        _tok_len = len(tok)
+                        _raw_rev = raw[::-1]
+                        _stripped_rev = raw_stripped[::-1]
+                        _cut = len(raw_stripped) - len(rem_stripped)
+                        # หา offset ใน raw ที่ตรงกับจุดตัด
+                        _raw_offset = 0
+                        _stripped_count = 0
+                        for _ch in raw:
+                            if _stripped_count >= len(rem_stripped):
+                                break
+                            _raw_offset += 1
+                            if not _THAI_DIACRITICS_RE.match(_ch):
+                                _stripped_count += 1
+                        matched_rem = raw[:_raw_offset].strip()
 
             if matched_rem is not None:
                 entry = (camp_name, matched_rem, base_no)
