@@ -763,11 +763,34 @@ def is_camp_scoped_round_command(text: str) -> bool:
 
 
 def _camp_candidates_for_command(camp_name: str, chat_id: str = None, want_settled: bool = None):
-    """หา state จากชื่อค่าย รองรับ fuzzy match + ตัด (N) + ลบวรรณยุกต์"""
+    """หา state จากชื่อค่าย รองรับ fuzzy match + ตัด (N) + ลบวรรณยุกต์
+    logic เดียวกับคำสั่งปิด:
+      - suffix หลัง - : exact match (เช่น 'นุ' match 'นุนำชัย-นุ')
+      - prefix ก่อน - : substring match
+      - ค่ายไม่มี - : substring match
+      - exact ทั้งชื่อ: match เสมอ
+    """
     THAI_DIACRITICS_RE = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]")
     def _sd(t): return THAI_DIACRITICS_RE.sub("", t or "")
     def _si(t): return re.sub(r"\s*\(\d+\)\s*$", "", (t or "").strip())
     def _norm(t): return _sd(normalize_camp_key(_si(t)))
+
+    def _match(stored_name, kw):
+        cs = _norm(stored_name)
+        if cs == kw:
+            return True
+        _dash = stored_name.rfind("-")
+        if _dash >= 0:
+            _suffix = _norm(stored_name[_dash+1:])
+            if _suffix and _suffix == kw:
+                return True
+            _prefix = _norm(stored_name[:_dash])
+            if len(kw) >= 2 and kw in _prefix:
+                return True
+        else:
+            if len(kw) >= 2 and kw in cs:
+                return True
+        return False
 
     kw = _norm(camp_name)
     rows = []
@@ -778,9 +801,7 @@ def _camp_candidates_for_command(camp_name: str, chat_id: str = None, want_settl
             continue
         if not st.get("round_id"):
             continue
-        # fuzzy match: keyword เป็น substring ของชื่อค่าย (หลัง strip dia + index)
-        cs = _norm(st.get("camp_name"))
-        if not (cs == kw or kw in cs):
+        if not _match(st.get("camp_name") or "", kw):
             continue
         if want_settled is True and not st.get("settled"):
             continue
@@ -817,7 +838,8 @@ def resolve_camp_scoped_command(text: str, chat_id: str = None):
         if not candidates:
             return {"error": _camp_command_not_found_text(parsed.get("camp_name"), want_settled=False)}
         if len(candidates) > 1:
-            return {"error": f"❌ มีค่ายชื่อ {parsed.get('camp_name')} มากกว่า 1 รอบค้างอยู่ ระบบไม่แจ้งผลให้เพื่อกันผิดรอบ\nกรุณาใช้ CK รวม ตรวจสอบก่อน"}
+            _clist = "\n".join(f"- {st.get('camp_name','-')}" for _, st in candidates)
+            return {"error": f"❌ พบหลายค่ายที่ตรงกับ '{parsed.get('camp_name')}' กรุณาระบุชื่อให้ชัดขึ้น:\n{_clist}"}
         return {"base_no": candidates[0][0], "text": parsed.get("text"), "camp_name": parsed.get("camp_name")}
 
     parsed = parse_camp_rollback_result_command(text)
