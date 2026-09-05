@@ -14117,9 +14117,11 @@ def handle_message(event):
 
             def _camp_match(camp_name, keyword):
                 """จับชื่อค่ายสำหรับคำสั่งปิด:
-                  - suffix หลัง - : exact match (เช่น 'กุด' match 'หนุ่มกุดชุมท่อ3-กุด')
-                  - ส่วนหน้า - หรือชื่อไม่มี - : substring match ตามเดิม (ลบวรรณยุกต์)
-                  - พิมชื่อเต็มทั้งหมด: exact match
+                  - suffix หลัง - : exact match ตัด (N) และวรรณยุกต์ออกก่อนเทียบ
+                    เช่น 'นุ' match 'นุ้ำขัย-นุ' และ 'นุ้ำขัย-นุ (2)'
+                  - prefix ก่อน - : substring match (ลบวรรณยุกต์)
+                  - ค่ายไม่มี - : substring match
+                  - พิมชื่อเต็ม: exact match
                 """
                 ks = _strip_dia(normalize_camp_key(_strip_index(keyword)))
                 if not ks:
@@ -14130,7 +14132,8 @@ def handle_message(event):
                     return True
                 _dash_idx = camp_name.rfind("-")
                 if _dash_idx >= 0:
-                    _suffix = _strip_dia(normalize_camp_key(camp_name[_dash_idx+1:].strip()))
+                    # ตัด (N) ออกจาก suffix ด้วย เพื่อให้ 'นุ' match 'นุ้ำขัย-นุ (2)'
+                    _suffix = _strip_dia(normalize_camp_key(_strip_index(camp_name[_dash_idx+1:].strip())))
                     _prefix = _strip_dia(normalize_camp_key(camp_name[:_dash_idx].strip()))
                     # suffix exact
                     if _suffix and _suffix == ks:
