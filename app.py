@@ -4679,20 +4679,17 @@ def call_easyslip_api(image_bytes: bytes):
     last_status = None
     last_data = None
 
-    # V2 ใช้ JSON body + base64 image (ไม่ใช่ multipart/form-data แบบ V1)
-    import base64 as _base64
-    image_b64 = _base64.b64encode(image_bytes).decode("utf-8")
-
+    # V2 ใช้ multipart/form-data field=image (ไม่ใช่ JSON+base64)
     for attempt in range(1, attempts + 1):
         try:
             headers = {
                 "Authorization": f"Bearer {EASYSLIP_API_KEY}",
-                "Content-Type": "application/json",
             }
+            files = {"image": ("slip.jpg", image_bytes, "image/jpeg")}
             response = requests.post(
                 api_url,
                 headers=headers,
-                json={"image": image_b64},
+                files=files,
                 timeout=(EASYSLIP_CONNECT_TIMEOUT_SECONDS, EASYSLIP_TIMEOUT_SECONDS),
             )
             last_status = response.status_code
