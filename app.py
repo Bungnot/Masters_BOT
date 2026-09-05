@@ -3054,7 +3054,7 @@ def is_rules_request(text: str) -> bool:
     return clean in {"กต", "กติกา"}
 
 
-RULES_IMAGE_URL = "https://i.postimg.cc/6QMWjT2d/c786e7f3-a5cc-4ab3-ba63-78c1d8341fa9.png"
+RULES_IMAGE_URL = "https://i.postimg.cc/jdGq5W09/Chat-GPT-Image-6-k-y-2569-04-34-02.png"
 
 
 def rules_flex() -> dict:
@@ -3836,7 +3836,7 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
             "body": {
                 "type": "box", "layout": "vertical", "paddingAll": "10px", "backgroundColor": "#FFFFFF",
                 "contents": [
-                    {"type": "text", "text": "📋 ผลบั้งไฟ 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
+                    {"type": "text", "text": "📋 สกอเถ้าแก่น้อย 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
                     {"type": "text", "text": f"🗓️ {today_text}  |  หน้า {p_no}/{total_pages}", "size": "xs", "align": "center", "color": "#64748B", "margin": "xs"},
                     {"type": "text", "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}   รวม {total} ค่าย", "size": "sm", "weight": "bold", "align": "center", "color": "#111827", "margin": "md", "wrap": True},
                     {"type": "box", "layout": "vertical", "margin": "md", "contents": table_contents},
