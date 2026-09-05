@@ -14094,33 +14094,33 @@ def handle_message(event):
                 return re.sub(r"\s*\(\d+\)\s*$", "", (t or "").strip())
 
             def _camp_match(camp_name, keyword):
-                """จับชื่อค่ายสำหรับคำสั่งปิด โดยยึดตามลำดับนี้:
-                  1. ถ้าชื่อค่ายมี - ให้จับเฉพาะ suffix หลัง - (exact, ลบวรรณยุกต์)
-                     เช่น 'นุ' match 'นุ่มน้ำขัย-นุ' แต่ไม่ match 'หมู่ยางซุ่ม-ยาง'
-                  2. ถ้าชื่อค่ายไม่มี - ให้ใช้ substring match ตามปกติ (ลบวรรณยุกต์)
+                """จับชื่อค่ายสำหรับคำสั่งปิด:
+                  - suffix หลัง - : exact match (เช่น 'กุด' match 'หนุ่มกุดชุมท่อ3-กุด')
+                  - ส่วนหน้า - หรือชื่อไม่มี - : substring match ตามเดิม (ลบวรรณยุกต์)
+                  - พิมชื่อเต็มทั้งหมด: exact match
                 """
                 ks = _strip_dia(normalize_camp_key(_strip_index(keyword)))
                 if not ks:
                     return False
+                cs = _strip_dia(normalize_camp_key(_strip_index(camp_name)))
+                # exact ทั้งชื่อ (พิมเต็ม)
+                if cs == ks:
+                    return True
                 _dash_idx = camp_name.rfind("-")
                 if _dash_idx >= 0:
-                    # ค่ายมี suffix — ยึด suffix เป็นหลัก exact เท่านั้น
                     _suffix = _strip_dia(normalize_camp_key(camp_name[_dash_idx+1:].strip()))
+                    _prefix = _strip_dia(normalize_camp_key(camp_name[:_dash_idx].strip()))
+                    # suffix exact
                     if _suffix and _suffix == ks:
                         return True
-                    # รองรับกรณีพิมชื่อเต็มทั้งหมด เช่น ปิด นุ่มน้ำขัย-นุ
-                    cs = _strip_dia(normalize_camp_key(_strip_index(camp_name)))
-                    if cs == ks:
+                    # prefix substring (keyword >= 2 ตัว)
+                    if len(ks) >= 2 and ks in _prefix:
                         return True
-                    return False
                 else:
-                    # ค่ายไม่มี - fallback substring (ลบวรรณยุกต์, keyword >= 2 ตัว หรือ exact)
-                    cs = _strip_dia(normalize_camp_key(_strip_index(camp_name)))
-                    if cs == ks:
-                        return True
+                    # ค่ายไม่มี - substring ปกติ
                     if len(ks) >= 2 and ks in cs:
                         return True
-                    return False
+                return False
 
             _matched_camps = [(bn, st) for bn, st in _open_states if _camp_match(st.get("camp_name") or "", _keyword)]
 
