@@ -3054,7 +3054,7 @@ def is_rules_request(text: str) -> bool:
     return clean in {"กต", "กติกา"}
 
 
-RULES_IMAGE_URL = "https://i.postimg.cc/jdGq5W09/Chat-GPT-Image-6-k-y-2569-04-34-02.png"
+RULES_IMAGE_URL = "https://i.postimg.cc/6QMWjT2d/c786e7f3-a5cc-4ab3-ba63-78c1d8341fa9.png"
 
 
 def rules_flex() -> dict:
@@ -3836,7 +3836,7 @@ def _build_scoreboard_flex_from_rows(rows, limit: int = 120):
             "body": {
                 "type": "box", "layout": "vertical", "paddingAll": "10px", "backgroundColor": "#FFFFFF",
                 "contents": [
-                    {"type": "text", "text": "📋 ผลเถ้าแก่น้อย 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
+                    {"type": "text", "text": "📋 ผลบั้งไฟ 📋", "size": "lg", "weight": "bold", "align": "center", "color": "#0F172A"},
                     {"type": "text", "text": f"🗓️ {today_text}  |  หน้า {p_no}/{total_pages}", "size": "xs", "align": "center", "color": "#64748B", "margin": "xs"},
                     {"type": "text", "text": f"✅ ชนะ {win_count}   ❌ แพ้ {lose_count}   ⛔ จาว {jow_count}   รวม {total} ค่าย", "size": "sm", "weight": "bold", "align": "center", "color": "#111827", "margin": "md", "wrap": True},
                     {"type": "box", "layout": "vertical", "margin": "md", "contents": table_contents},
@@ -6797,29 +6797,38 @@ def find_camp_in_text(text: str) -> tuple:
 
     alias_pat = "|".join(re.escape(x) for x in ALL_PLAY_ALIASES)
 
-    def _play_parseable(t: str) -> bool:
-        c = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", t or "")
-        return bool(re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c))
-
     _THAI_CONSONANT_RE = re.compile(r"[\u0E01-\u0E2E\u0E30\u0E32\u0E33\u0E40-\u0E44]")
     _THAI_DIACRITICS_RE = re.compile(r"[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]")
 
     def _strip_dia(t: str) -> str:
         return _THAI_DIACRITICS_RE.sub("", t or "")
 
+    # alias pattern แบบ stripped วรรณยุกต์ออก สำหรับเช็ค rem ที่ผ่าน _strip_dia มาแล้ว
+    # เช่น ช่างรับ→ชางรบ, ยั้ง→ยง, ช่างถอย→ชางถอย
+    alias_pat_stripped = "|".join(re.escape(_strip_dia(x)) for x in ALL_PLAY_ALIASES)
+
     def _play_parseable(t: str) -> bool:
         c = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", t or "")
-        # แบบปกติ: ชล500 / +5ชล500
+        # แบบปกติ (raw): ชล500, ช่างรับ500, ยั้ง500
         if re.match(rf"^([+-]\d+)?({alias_pat})(\d+)$", c):
             return True
-        # แบบตัวเลขช่วง 3 หลัก: 280-290ล500 / 330/360ล500 / 330-360+5ล500
+        # แบบ stripped (จาก case 1b/4b ที่ rem ผ่าน _strip_dia มาแล้ว): ชางรบ500, ยง500
+        if re.match(rf"^([+-]\d+)?({alias_pat_stripped})(\d+)$", c):
+            return True
+        # แบบตัวเลขช่วง 3 หลัก
         if re.match(rf"^(?:ตัว)?\d{{3}}[-/]\d{{3}}([+-]\d+)?({alias_pat})\d+(ชตย)?$", c):
             return True
-        # แบบตัวเลขเดียว 3 หลัก: 400ล500 / 400+5ล500
+        if re.match(rf"^(?:ตัว)?\d{{3}}[-/]\d{{3}}([+-]\d+)?({alias_pat_stripped})\d+(ชตย)?$", c):
+            return True
+        # แบบตัวเลขเดียว 3 หลัก
         if re.match(rf"^\d{{3}}([+-]\d+)?({alias_pat})\d+(ชตย)?$", c):
             return True
-        # แบบเลข 2 ตัว: 30-70ล500 / 3-7ล500
+        if re.match(rf"^\d{{3}}([+-]\d+)?({alias_pat_stripped})\d+(ชตย)?$", c):
+            return True
+        # แบบเลข 2 ตัว
         if re.match(rf"^(?:ตัว)?\d{{1,2}}[-/]\d{{1,2}}({alias_pat})\d+(ชตย)?$", c):
+            return True
+        if re.match(rf"^(?:ตัว)?\d{{1,2}}[-/]\d{{1,2}}({alias_pat_stripped})\d+(ชตย)?$", c):
             return True
         return False
 
